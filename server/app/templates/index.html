@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Hosts · Prox Secure{% endblock %}
+{% block content %}
+<section>
+  <h2>Hosts</h2>
+  <table>
+    <thead>
+      <tr><th>Nombre</th><th>CPU</th><th>Mem</th><th>Disco</th><th>Load1</th><th>Visto</th></tr>
+    </thead>
+    <tbody>
+      {% for host in hosts %}
+      {% set m = latest.get(host.id) %}
+      <tr>
+        <td><a class="host-link" href="/hosts/{{ host.id }}">{{ host.name }}</a></td>
+        <td>{{ "%.1f"|format(m.cpu_percent) if m and m.cpu_percent is not none else "-" }}%</td>
+        <td>{{ "%.1f"|format(m.mem_percent) if m and m.mem_percent is not none else "-" }}%</td>
+        <td>{{ "%.1f"|format(m.disk_percent) if m and m.disk_percent is not none else "-" }}%</td>
+        <td>{{ m.load1 if m and m.load1 is not none else "-" }}</td>
+        <td>{{ host.last_seen or "nunca" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6">Sin hosts registrados todavia. Crea uno con POST /api/v1/hosts.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Alertas activas</h2>
+  <table>
+    <thead><tr><th>Host</th><th>Valor</th><th>Disparada</th><th>Resumen IA</th></tr></thead>
+    <tbody>
+      {% for a in alerts %}
+      <tr>
+        <td>{{ a.host_id }}</td>
+        <td>{{ a.value }}</td>
+        <td>{{ a.triggered_at }}</td>
+        <td>{{ a.ai_summary or "(pendiente)" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">Sin alertas activas.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

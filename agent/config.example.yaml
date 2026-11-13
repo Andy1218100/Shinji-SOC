@@ -1,0 +1,4 @@
+# Copiar a config.yaml y completar con los datos reales del host.
+server_url: "http://TU_SERVIDOR:8000"
+api_key: "LA_API_KEY_DEL_HOST"
+interval_seconds: 15

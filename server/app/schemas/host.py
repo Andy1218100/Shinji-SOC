@@ -1,0 +1,28 @@
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from app.schemas.common import UUIDStr
+
+
+class HostCreate(BaseModel):
+    name: str
+    hostname: str
+    ip_address: str | None = None
+    os: str | None = None
+
+
+class HostOut(BaseModel):
+    id: UUIDStr
+    name: str
+    hostname: str
+    ip_address: str | None
+    os: str | None
+    last_seen: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class HostCreated(HostOut):
+    api_key: str

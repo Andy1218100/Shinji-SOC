@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ host.name if host else "Host" }} · Prox Secure{% endblock %}
+{% block content %}
+{% if host %}
+<section>
+  <h2>{{ host.name }}</h2>
+  <p>{{ host.hostname }} &middot; {{ host.ip_address or "" }} &middot; {{ host.os or "" }}</p>
+</section>
+
+<section>
+  <h3>Metricas (ultima hora)</h3>
+  <canvas id="chart" height="100"></canvas>
+</section>
+
+<section>
+  <h3>Preguntar a la IA</h3>
+  <form hx-post="/api/v1/ai/ask" hx-ext="json-enc" hx-target="#ai-answer" hx-swap="innerHTML"
+        onsubmit="event.preventDefault(); askAi();">
+    <input type="hidden" id="host_id" value="{{ host.id }}" />
+    <input type="text" id="question" placeholder="Ej: por que subio el uso de CPU?" style="width: 60%;" />
+    <button type="submit">Preguntar</button>
+  </form>
+  <pre id="ai-answer"></pre>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+async function loadMetrics() {
+  const res = await fetch(`/api/v1/hosts/{{ host.id }}/metrics?minutes=60`);
+  const data = await res.json();
+  const labels = data.map(d => d.ts);
+  new Chart(document.getElementById('chart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'CPU %', data: data.map(d => d.cpu_percent), borderColor: '#6cb6ff', tension: 0.3 },
+        { label: 'Mem %', data: data.map(d => d.mem_percent), borderColor: '#ffb86c', tension: 0.3 },
+        { label: 'Disco %', data: data.map(d => d.disk_percent), borderColor: '#9cff6c', tension: 0.3 },
+      ],
+    },
+  });
+}
+loadMetrics();
+
+async function askAi() {
+  const question = document.getElementById('question').value;
+  const host_id = document.getElementById('host_id').value;
+  const res = await fetch('/api/v1/ai/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, host_id }),
+  });
+  const data = await res.json();
+  document.getElementById('ai-answer').textContent = data.answer || JSON.stringify(data);
+}
+</script>
+{% else %}
+<p>Host no encontrado.</p>
+{% endif %}
+{% endblock %}

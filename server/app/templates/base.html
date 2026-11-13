@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Prox Secure{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f1117; color: #e6e6e6; }
+    header { padding: 1rem 1.5rem; background: #161926; border-bottom: 1px solid #262b3d; }
+    header a { color: #e6e6e6; text-decoration: none; font-weight: 600; }
+    main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #262b3d; }
+    th { color: #9aa0b4; font-size: 0.85rem; text-transform: uppercase; }
+    .badge { padding: 0.15rem 0.5rem; border-radius: 0.3rem; font-size: 0.8rem; }
+    .ok { background: #1f6f43; }
+    .warn { background: #8a5a12; }
+    .crit { background: #7a1f2b; }
+    a.host-link { color: #6cb6ff; }
+    section { background: #161926; border: 1px solid #262b3d; border-radius: 0.5rem; padding: 1rem; margin-bottom: 1.5rem; }
+  </style>
+</head>
+<body>
+  <header><a href="/">Prox Secure · Monitoreo</a></header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

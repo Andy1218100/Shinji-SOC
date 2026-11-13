@@ -1,0 +1,17 @@
+[Unit]
+Description=Prox Secure - agente de monitoreo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/prox-secure-agent
+EnvironmentFile=-/opt/prox-secure-agent/.env
+ExecStart=/opt/prox-secure-agent/.venv/bin/python /opt/prox-secure-agent/collector.py
+Restart=on-failure
+RestartSec=5
+User=prox-secure
+Group=prox-secure
+
+[Install]
+WantedBy=multi-user.target
