@@ -1,15 +1,61 @@
 # Prox Secure
 
-Sistema propio de monitoreo y analisis de servidores (estilo Zabbix), con
-IA local (Ollama) y conexion opcional a Claude para analisis mas profundo.
+Sistema propio de monitoreo y SOC (centro de operaciones de seguridad)
+para servidores propios, con IA local (Ollama) y conexion opcional a
+Claude para analisis mas profundo.
+
+## Que hace
+
+**Monitoreo** (estilo Zabbix): metricas de CPU/mem/disco/red por host,
+reglas de alerta con umbral, explicacion automatica por IA.
+
+**SOC**: ademas de metricas, el agente puede leer los logs de acceso del
+servidor web y vigilar procesos de cuentas de servicio (www-data, nginx,
+etc.). El servidor corre un motor de deteccion **heuristico** (reglas +
+conteos, no un modelo de ML entrenado) que marca:
+- escaneo de rutas sensibles (`/wp-admin`, `.env`, `.git`, etc.) y oleadas
+  de 404 de una misma IP;
+- fuerza bruta / flood (demasiadas requests de una IP en poco tiempo);
+- procesos sospechosos bajo cuentas de servicio (ej. `www-data` lanzando
+  `bash`/`wget`/`python` = posible webshell).
+
+Cada deteccion genera un evento con una explicacion en lenguaje natural
+(IA) y una accion sugerida (bloquear IP o matar el proceso), geolocalizada
+en un mapa interactivo si configuras GeoIP. **Nada se bloquea solo**: el
+administrador aprueba cada accion desde `/security` y ahi se ejecuta.
+
+## Limitaciones reales (leer antes de confiar en esto en produccion)
+
+- El "aprendizaje" es acumular listas y contar eventos en ventanas de
+  tiempo, no un modelo entrenado. Con trafico legitimo raro puede haber
+  falsos positivos (y falsos negativos frente a ataques mas sofisticados).
+- El parser de logs solo entiende el formato "combined" de nginx/apache.
+  Otro formato no se va a parsear (se ignora esa linea).
+- La vigilancia de procesos es una lista fija de binarios "sospechosos"
+  (`bash`, `wget`, `python`, etc.). Una app que legitimamente hace
+  `shell_exec` va a generar falsos positivos; por eso requiere aprobacion
+  manual, no bloquea/mata solo.
+- El bloqueo usa fail2ban con un jail dedicado (`proxsecure`) que no tiene
+  deteccion propia, solo recibe bloqueos manuales desde el panel. Requiere
+  fail2ban instalado en el host (lo instala `install.sh`).
+- No hay sistema de login real en el dashboard todavia: las acciones de
+  aprobar/bloquear piden la `ADMIN_API_KEY` una vez y la guardan en
+  `localStorage` del navegador. Pensado para uso propio en red interna,
+  no para exponer el dashboard a internet sin un proxy con auth adelante.
+- El mapa de ataques necesita que configures una license key de MaxMind
+  (gratis); sin eso, los eventos se ven en la lista pero sin punto en el
+  mapa.
 
 ## Componentes
 
-- `server/`: API + dashboard (FastAPI, Python). Recibe metricas, evalua
-  reglas de alerta, guarda todo en PostgreSQL/TimescaleDB y expone un
-  endpoint de IA para preguntar sobre el estado de los hosts.
-- `agent/`: agente liviano (Python + psutil) que se instala en cada
-  servidor Linux a monitorear y envia metricas al servidor central.
+- `server/`: API + dashboard (FastAPI, Python). Recibe metricas y logs,
+  evalua reglas de alerta y el motor IDS, guarda todo en
+  PostgreSQL/TimescaleDB, resuelve GeoIP y expone un endpoint de IA para
+  preguntar sobre el estado de los hosts.
+- `agent/`: agente Python (un solo proceso, varias tareas async) que se
+  instala en cada servidor Linux: envia metricas, lee logs de acceso,
+  vigila procesos de cuentas de servicio y ejecuta (via sudo acotado) los
+  bloqueos/kills que el administrador aprueba.
 - `docker-compose.yml`: levanta base de datos, Ollama y el servidor.
 
 ## Requisitos
@@ -23,10 +69,27 @@ IA local (Ollama) y conexion opcional a Claude para analisis mas profundo.
 cp .env.example .env
 # editar .env: contrasenas, ADMIN_API_KEY, y si quieres Claude, ANTHROPIC_API_KEY
 docker compose up -d
-docker compose exec ollama ollama pull llama3.1:8b
+docker compose exec ollama ollama pull qwen2.5:3b
 ```
 
-El dashboard queda en http://localhost:8000
+El dashboard queda en http://localhost:8000 (monitoreo) y
+http://localhost:8000/security (SOC: eventos, mapa, IPs bloqueadas).
+
+> **Nota sobre el modelo de IA**: usamos `qwen2.5:3b` por defecto, no un
+> modelo mas grande como `llama3.1:8b`. En esta maquina, sin GPU,
+> `llama3.1:8b` tardo **~9 minutos** en responder una sola pregunta via
+> Ollama (medido con `ollama ps`/tiempo real) e inutiliza cualquier
+> alerta en tiempo real. `qwen2.5:3b` responde en pocos segundos. Si tu
+> servidor tiene GPU, podes cambiar `OLLAMA_MODEL` por uno mas grande.
+
+### Mapa de ataques (opcional, GeoIP)
+
+```bash
+# 1. Cuenta gratuita + license key: https://www.maxmind.com/en/geolite2/signup
+# 2. Agregar MAXMIND_LICENSE_KEY=... en .env
+./scripts/update_geoip_db.sh
+docker compose restart server
+```
 
 ## Registrar un host a monitorear
 
@@ -49,8 +112,36 @@ cd /tmp/prox-secure-agent
 sudo ./install.sh http://TU_SERVIDOR:8000 LA_API_KEY_DEL_HOST
 ```
 
-Esto crea un usuario de sistema, un virtualenv y un servicio systemd
-(`prox-secure-agent`) que corre el recolector en loop.
+Esto crea un usuario de sistema sin privilegios, instala fail2ban, un
+virtualenv, el sudoers acotado (`/etc/sudoers.d/prox-secure-agent`, solo
+permite `fail2ban-client set * banip/unbanip *` y el wrapper
+`kill_process.sh`) y un servicio systemd (`prox-secure-agent`) con el
+agente completo (metricas + logs + procesos + comandos).
+
+Por defecto solo las metricas estan activas. Para activar logs de acceso
+y vigilancia de procesos, editar `/opt/prox-secure-agent/config.yaml`
+(ver `agent/config.example.yaml`) y reiniciar: `systemctl restart
+prox-secure-agent`.
+
+## Eventos de seguridad: ver, aprobar, bloquear
+
+```bash
+# ver eventos abiertos
+curl http://localhost:8000/api/v1/security-events?status=open
+
+# aprobar la accion sugerida (bloquear IP o matar el proceso)
+curl -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/approve \
+  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+
+# descartar sin actuar
+curl -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/dismiss \
+  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+```
+
+Al aprobar, el servidor deja un "comando" en cola para ese host; el
+agente lo recoge en su siguiente ciclo (cada
+`command_poll_interval_seconds`, 10s por defecto) y lo ejecuta. Lo mismo
+desde el dashboard en `/security` (pide la `ADMIN_API_KEY` una vez).
 
 ## Reglas de alerta
 

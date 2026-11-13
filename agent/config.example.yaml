@@ -1,4 +1,25 @@
 # Copiar a config.yaml y completar con los datos reales del host.
 server_url: "http://TU_SERVIDOR:8000"
 api_key: "LA_API_KEY_DEL_HOST"
-interval_seconds: 15
+
+metrics_interval_seconds: 15
+
+# Logs de servidor web a vigilar (formato "combined" de nginx/apache).
+log_paths:
+  - /var/log/nginx/access.log
+
+# Cuentas de servicio cuyos procesos se vigilan. Si una de estas cuentas
+# ejecuta un binario de la lista suspicious_binaries (ver process_watch.py),
+# se reporta como posible webshell/RCE.
+process_watch:
+  interval_seconds: 10
+  service_users:
+    - www-data
+    - nginx
+    - apache
+
+command_poll_interval_seconds: 10
+
+# Nombre del jail de fail2ban usado para bloqueos manuales (ver
+# agent/fail2ban/jail.d/proxsecure.conf).
+fail2ban_jail: proxsecure

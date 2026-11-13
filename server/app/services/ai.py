@@ -12,15 +12,18 @@ SYSTEM_PROMPT = (
 async def ask_ollama(prompt: str) -> str:
     async with httpx.AsyncClient(base_url=settings.ollama_host, timeout=120) as client:
         resp = await client.post(
-            "/api/generate",
+            "/api/chat",
             json={
                 "model": settings.ollama_model,
-                "prompt": f"{SYSTEM_PROMPT}\n\n{prompt}",
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
                 "stream": False,
             },
         )
         resp.raise_for_status()
-        return resp.json().get("response", "").strip()
+        return resp.json().get("message", {}).get("content", "").strip()
 
 
 async def ask_claude(prompt: str) -> str:

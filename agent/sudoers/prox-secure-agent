@@ -1,0 +1,6 @@
+
+Cmnd_Alias PROXSECURE_CMDS = /usr/bin/fail2ban-client set * banip *, \
+                              /usr/bin/fail2ban-client set * unbanip *, \
+                              /opt/prox-secure-agent/kill_process.sh *
+
+prox-secure ALL=(root) NOPASSWD: PROXSECURE_CMDS

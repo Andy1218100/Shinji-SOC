@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Seguridad · Prox Secure{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<section>
+  <h2>Mapa de origenes de ataque</h2>
+  <div id="map" style="height: 380px; border-radius: 0.5rem;"></div>
+  <p style="color:#9aa0b4; font-size:0.85rem;">
+    Sin base GeoIP configurada (MaxMind), los eventos aparecen en la lista pero sin punto en el mapa.
+  </p>
+</section>
+
+<section>
+  <h2>Eventos de seguridad</h2>
+  <table>
+    <thead>
+      <tr><th>Cuando</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle / IA</th><th>Estado</th><th></th></tr>
+    </thead>
+    <tbody id="events-body">
+      <tr><td colspan="7">Cargando...</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>IPs bloqueadas</h2>
+  <table>
+    <thead><tr><th>IP</th><th>Host</th><th>Desde</th><th>Motivo</th><th></th></tr></thead>
+    <tbody id="blocked-body">
+      <tr><td colspan="5">Cargando...</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+function adminKey() {
+  let key = localStorage.getItem('proxsecure_admin_key');
+  if (!key) {
+    key = prompt('Clave admin (ADMIN_API_KEY del .env), se guarda solo en este navegador:');
+    if (key) localStorage.setItem('proxsecure_admin_key', key);
+  }
+  return key || '';
+}
+
+const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
+
+const map = L.map('map').setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap',
+  maxZoom: 18,
+}).addTo(map);
+
+async function loadEvents() {
+  const res = await fetch('/api/v1/security-events');
+  const events = await res.json();
+
+  const tbody = document.getElementById('events-body');
+  tbody.innerHTML = '';
+  for (const layer of (map._proxLayers || [])) map.removeLayer(layer);
+  map._proxLayers = [];
+
+  if (events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7">Sin eventos todavia.</td></tr>';
+    return;
+  }
+
+  for (const ev of events) {
+    const tr = document.createElement('tr');
+    const badge = `<span class="badge ${severityClass[ev.severity] || 'warn'}">${ev.severity}</span>`;
+    const canAct = ev.status === 'open' && ev.suggested_action;
+    tr.innerHTML = `
+      <td>${new Date(ev.created_at).toLocaleString()}</td>
+      <td>${ev.kind}</td>
+      <td>${badge}</td>
+      <td>${ev.source_ip || '-'} ${ev.geo_country ? `(${ev.geo_city || ''} ${ev.geo_country})` : ''}</td>
+      <td>${ev.ai_summary || '(sin resumen de IA todavia)'}</td>
+      <td>${ev.status}</td>
+      <td>${canAct ? `
+        <button onclick="approve('${ev.id}')">Aprobar ${ev.suggested_action}</button>
+        <button onclick="dismiss('${ev.id}')">Descartar</button>
+      ` : ''}</td>
+    `;
+    tbody.appendChild(tr);
+
+    if (ev.geo_lat && ev.geo_lon) {
+      const marker = L.circleMarker([ev.geo_lat, ev.geo_lon], {
+        radius: 7,
+        color: ev.severity === 'critical' ? '#e2555f' : '#e0a34e',
+      }).bindPopup(`${ev.source_ip}<br>${ev.kind}`).addTo(map);
+      map._proxLayers.push(marker);
+    }
+  }
+}
+
+async function loadBlocked() {
+  const res = await fetch('/api/v1/blocked-ips');
+  const rows = await res.json();
+  const tbody = document.getElementById('blocked-body');
+  tbody.innerHTML = rows.length ? '' : '<tr><td colspan="5">Sin IPs bloqueadas.</td></tr>';
+  for (const b of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${b.ip}</td>
+      <td>${b.host_id}</td>
+      <td>${new Date(b.blocked_at).toLocaleString()}</td>
+      <td>${b.reason || '-'}</td>
+      <td><button onclick="unblock('${b.id}')">Desbloquear</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function approve(id) {
+  await fetch(`/api/v1/security-events/${id}/approve`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
+  loadEvents();
+}
+async function dismiss(id) {
+  await fetch(`/api/v1/security-events/${id}/dismiss`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
+  loadEvents();
+}
+async function unblock(id) {
+  await fetch(`/api/v1/blocked-ips/${id}/unblock`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
+  loadBlocked();
+}
+
+loadEvents();
+loadBlocked();
+setInterval(loadEvents, 15000);
+setInterval(loadBlocked, 15000);
+</script>
+{% endblock %}

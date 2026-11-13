@@ -39,3 +39,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
 async def host_detail(request: Request, host_id: str, db: AsyncSession = Depends(get_db)):
     host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
     return templates.TemplateResponse("host.html", {"request": request, "host": host})
+
+
+@router.get("/security")
+async def security_page(request: Request):
+    return templates.TemplateResponse("security.html", {"request": request})

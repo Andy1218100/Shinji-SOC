@@ -1,22 +1,36 @@
 #!/usr/bin/env bash
-# Instala el agente de Prox Secure en un servidor Linux.
+# Instala el agente de Prox Secure en un servidor Linux (Debian/Ubuntu).
 # Uso: sudo ./install.sh <server_url> <api_key>
 set -euo pipefail
 
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
 INSTALL_DIR="/opt/prox-secure-agent"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root (sudo)." >&2
   exit 1
 fi
 
+if ! command -v fail2ban-client &>/dev/null; then
+  echo "Instalando fail2ban..."
+  apt-get update -y && apt-get install -y fail2ban
+fi
+
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
 
 mkdir -p "$INSTALL_DIR"
-cp "$(dirname "$0")/collector.py" "$INSTALL_DIR/"
-cp "$(dirname "$0")/requirements.txt" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR"/*.py "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/requirements.txt" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/kill_process.sh" "$INSTALL_DIR/"
+chmod 755 "$INSTALL_DIR/kill_process.sh"
+
+if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
+  cp "$SCRIPT_DIR/config.example.yaml" "$INSTALL_DIR/config.yaml"
+  echo "Creado $INSTALL_DIR/config.yaml con valores de ejemplo."
+  echo "Editalo para activar log_paths (logs de nginx/apache) y process_watch.service_users."
+fi
 
 python3 -m venv "$INSTALL_DIR/.venv"
 "$INSTALL_DIR/.venv/bin/pip" install --no-cache-dir -r "$INSTALL_DIR/requirements.txt"
@@ -29,7 +43,18 @@ chmod 600 "$INSTALL_DIR/.env"
 
 chown -R prox-secure:prox-secure "$INSTALL_DIR"
 
-cp "$(dirname "$0")/prox-secure-agent.service" /etc/systemd/system/
+# fail2ban: jail dedicado para bloqueos manuales via panel
+mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+cp "$SCRIPT_DIR/fail2ban/filter.d/proxsecure.conf" /etc/fail2ban/filter.d/
+cp "$SCRIPT_DIR/fail2ban/jail.d/proxsecure.conf" /etc/fail2ban/jail.d/
+systemctl enable --now fail2ban
+systemctl restart fail2ban
+
+# sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
+install -m 440 "$SCRIPT_DIR/sudoers/prox-secure-agent" /etc/sudoers.d/prox-secure-agent
+visudo -c -f /etc/sudoers.d/prox-secure-agent
+
+cp "$SCRIPT_DIR/prox-secure-agent.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now prox-secure-agent
 
