@@ -150,6 +150,16 @@ during the inspection round (not a hypothetical list):
 
 Verdict: ship. All six FIRST VIEWPORT/STORY promises in the contract
 above hold at both inspected widths. Known, disclosed gaps (not
-defects — out of scope per this brief): no real backend accounts/roles
-behind the login screen; GeoIP needs the user's own MaxMind key to show
-map points; alert-rule management stays API-only.
+defects — out of scope per this brief): GeoIP needs the user's own
+MaxMind key to show map points; alert-rule management stays API-only.
+
+**Update (2026-11-13):** the "no real backend accounts/roles" gap above
+is closed. Real per-user accounts (password + mandatory TOTP MFA),
+`admin`/`viewer` roles, and a `/users` management screen shipped — this
+was the open decision the shape round's "Modelo de acceso" question
+recorded as "usuarios individuales... aunque el backend no lo soporte
+todavia." It's now supported. Login was rebuilt as a multi-step flow
+(credentials → MFA verify, or → first-login setup: new password + QR
+enrollment) instead of the single username+password form the first
+build shipped. See DESIGN.md's Login/Reveal panel sections for the
+resulting components.

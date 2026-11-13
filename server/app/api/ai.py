@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user
 from app.core.db import get_db
 from app.models.alert import Alert
 from app.models.host import Host
@@ -49,7 +50,7 @@ async def _build_context(db: AsyncSession, host_id: str | None) -> str:
     return "\n".join(parts) if parts else "No hay datos recientes."
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[Depends(get_current_user)])
 async def ask(payload: AskRequest, db: AsyncSession = Depends(get_db)):
     context = await _build_context(db, payload.host_id)
     prompt = f"Contexto:\n{context}\n\nPregunta: {payload.question}"

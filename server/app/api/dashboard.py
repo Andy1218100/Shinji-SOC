@@ -3,10 +3,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.alert import Alert
 from app.models.host import Host
 from app.models.metric import Metric
+from app.models.user import User
 
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
@@ -27,7 +29,7 @@ def host_status(metric: Metric | None) -> str:
 
 
 @router.get("/")
-async def index(request: Request, db: AsyncSession = Depends(get_db)):
+async def index(request: Request, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     hosts = (await db.execute(select(Host).order_by(Host.name))).scalars().all()
 
     latest_by_host = {}
@@ -56,29 +58,39 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "alerts": alerts,
             "host_name_by_id": host_name_by_id,
             "active_nav": "monitoreo",
+            "user": user,
         },
     )
 
 
 @router.get("/hosts/{host_id}")
-async def host_detail(request: Request, host_id: str, db: AsyncSession = Depends(get_db)):
+async def host_detail(
+    request: Request, host_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+):
     host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
     return templates.TemplateResponse(
-        "host.html", {"request": request, "host": host, "active_nav": "monitoreo"}
+        "host.html", {"request": request, "host": host, "active_nav": "monitoreo", "user": user}
     )
 
 
 @router.get("/security")
-async def security_page(request: Request):
+async def security_page(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse(
-        "security.html", {"request": request, "active_nav": "seguridad"}
+        "security.html", {"request": request, "active_nav": "seguridad", "user": user}
     )
 
 
 @router.get("/vulnerabilities")
-async def vulnerabilities_page(request: Request):
+async def vulnerabilities_page(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse(
-        "vulnerabilities.html", {"request": request, "active_nav": "vulnerabilidades"}
+        "vulnerabilities.html", {"request": request, "active_nav": "vulnerabilidades", "user": user}
+    )
+
+
+@router.get("/users")
+async def users_page(request: Request, user: User = Depends(require_admin)):
+    return templates.TemplateResponse(
+        "users.html", {"request": request, "active_nav": "usuarios", "user": user}
     )
 
 

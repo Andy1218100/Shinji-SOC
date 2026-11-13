@@ -34,6 +34,10 @@ todavia no hay parche) **a partir de los datos que ya trajo de OSV** --
 la IA nunca decide por su cuenta si algo es vulnerable. Se ve en
 `/vulnerabilities`.
 
+**Acceso**: cuentas individuales (usuario + contrasena + MFA por TOTP),
+con rol admin o solo lectura. Nada de clave compartida. Gestion de
+usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
+
 ## Limitaciones reales (leer antes de confiar en esto en produccion)
 
 - El "aprendizaje" es acumular listas y contar eventos en ventanas de
@@ -48,11 +52,14 @@ la IA nunca decide por su cuenta si algo es vulnerable. Se ve en
 - El bloqueo usa fail2ban con un jail dedicado (`proxsecure`) que no tiene
   deteccion propia, solo recibe bloqueos manuales desde el panel. Requiere
   fail2ban instalado en el host (lo instala `install.sh`).
-- El login (`/login`) solo verifica la misma `ADMIN_API_KEY` compartida
-  de siempre -- no hay cuentas ni roles individuales todavia, es una UI
-  mejor sobre el mismo modelo de acceso. Pensado para uso propio en red
-  interna, no para exponer el dashboard a internet sin un proxy con auth
-  adelante.
+- Login con usuario + contrasena + MFA (TOTP), cuentas con rol admin o
+  solo lectura -- ver la seccion de abajo. No hay recuperacion de
+  contrasena por email (no hay servicio de correo en el proyecto): si
+  alguien se queda afuera, un admin le resetea la contrasena desde
+  `/users`. Tampoco hay log de auditoria de quien aprobo que accion.
+  Igual que siempre: pensado para uso propio en red interna, no para
+  exponer el dashboard a internet sin un proxy con HTTPS adelante (y en
+  ese caso, poner `SESSION_COOKIE_SECURE=true`).
 - El mapa de ataques necesita que configures una license key de MaxMind
   (gratis); sin eso, los eventos se ven en la lista pero sin punto en el
   mapa.
@@ -95,13 +102,18 @@ la IA nunca decide por su cuenta si algo es vulnerable. Se ve en
 
 ```bash
 cp .env.example .env
-# editar .env: contrasenas, ADMIN_API_KEY, y si quieres Claude, ANTHROPIC_API_KEY
+# editar .env: contrasenas, SESSION_SECRET_KEY (openssl rand -hex 32), y si quieres Claude, ANTHROPIC_API_KEY
 docker compose up -d
 docker compose exec ollama ollama pull qwen2.5:3b
+docker compose exec server python create_first_admin.py tu_usuario
 ```
 
-El dashboard queda en http://localhost:8000 (monitoreo) y
-http://localhost:8000/security (SOC: eventos, mapa, IPs bloqueadas).
+El ultimo comando te da un usuario y una contrasena temporal (se
+muestran una sola vez). Entra a http://localhost:8000/login con eso: el
+primer login te va a pedir una contrasena nueva y enrolar MFA (ver
+abajo). El dashboard queda en http://localhost:8000 (monitoreo),
+http://localhost:8000/security (SOC) y http://localhost:8000/users
+(gestion de cuentas).
 
 > **Nota sobre el modelo de IA**: usamos `qwen2.5:3b` por defecto, no un
 > modelo mas grande como `llama3.1:8b`. En esta maquina, sin GPU,
@@ -119,11 +131,54 @@ http://localhost:8000/security (SOC: eventos, mapa, IPs bloqueadas).
 docker compose restart server
 ```
 
+## Acceso: usuarios, contrasenas y MFA
+
+No hay mas clave compartida: cada persona tiene su propia cuenta
+(usuario + contrasena + MFA por TOTP -- Google Authenticator, Authy,
+etc., codigo de 6 digitos). Dos roles: `admin` (ve todo, aprueba/bloquea,
+gestiona usuarios) y `viewer` (ve todo, no puede actuar).
+
+**Primer usuario**: `docker compose exec server python create_first_admin.py tu_usuario`
+(ver arriba). Es el unico momento donde hace falta tocar la terminal --
+todo lo demas se gestiona desde `/users` una vez que ese primer admin
+entro.
+
+**Crear mas cuentas**: un admin logueado va a `/users`, pone el nombre y
+el rol, y el sistema genera una contrasena temporal que se muestra **una
+sola vez** (copiarla y pasarla por un canal seguro). Esa persona entra
+con esa contrasena, y el primer login la obliga a elegir una contrasena
+propia y enrolar su MFA (se le muestra el QR a ella, nunca al admin que
+creo la cuenta).
+
+**Sesiones**: cookie firmada (`itsdangerous`), `HttpOnly` + `SameSite=Lax`,
+24h por defecto (`SESSION_MAX_AGE_SECONDS`). 5 intentos fallidos
+(contrasena o codigo MFA) bloquean la cuenta 5 minutos
+(`LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_SECONDS`).
+
+**Scripts/automatizacion**: ya no existe una API key fija para esto. Para
+llamar la API desde un script, logueate con curl guardando las cookies y
+usalas en las siguientes llamadas:
+
+```bash
+# 1. login (devuelve pending_token; si la cuenta ya tiene MFA, stage="mfa")
+curl -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "tu_usuario", "password": "tu_contrasena"}'
+
+# 2. completar con el codigo de tu app de autenticacion
+curl -c cookies.txt -b cookies.txt -X POST http://localhost:8000/api/v1/auth/mfa/verify \
+  -H "Content-Type: application/json" \
+  -d '{"pending_token": "EL_PENDING_TOKEN", "code": "123456"}'
+
+# 3. de ahi en adelante, reusar cookies.txt
+curl -b cookies.txt http://localhost:8000/api/v1/hosts
+```
+
 ## Registrar un host a monitorear
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/hosts \
-  -H "X-Admin-Key: TU_ADMIN_API_KEY" \
+  -b cookies.txt \
   -H "Content-Type: application/json" \
   -d '{"name": "web-01", "hostname": "web-01.midominio.com", "ip_address": "10.0.0.5"}'
 ```
@@ -154,28 +209,25 @@ prox-secure-agent`.
 ## Eventos de seguridad: ver, aprobar, bloquear
 
 ```bash
-# ver eventos abiertos
-curl http://localhost:8000/api/v1/security-events?status=open
+# ver eventos abiertos (requiere login, ver seccion de Acceso arriba)
+curl -b cookies.txt http://localhost:8000/api/v1/security-events?status=open
 
-# aprobar la accion sugerida (bloquear IP o matar el proceso)
-curl -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/approve \
-  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+# aprobar la accion sugerida (bloquear IP o matar el proceso) -- requiere rol admin
+curl -b cookies.txt -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/approve
 
 # descartar sin actuar
-curl -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/dismiss \
-  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+curl -b cookies.txt -X POST http://localhost:8000/api/v1/security-events/EVENT_ID/dismiss
 ```
 
 Al aprobar, el servidor deja un "comando" en cola para ese host; el
 agente lo recoge en su siguiente ciclo (cada
 `command_poll_interval_seconds`, 10s por defecto) y lo ejecuta. Lo mismo
-desde el dashboard en `/security` (pide la `ADMIN_API_KEY` una vez).
+desde el dashboard en `/security`.
 
 ## Reglas de alerta
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/alert-rules \
-  -H "X-Admin-Key: TU_ADMIN_API_KEY" \
+curl -b cookies.txt -X POST http://localhost:8000/api/v1/alert-rules \
   -H "Content-Type: application/json" \
   -d '{"name": "CPU alta", "metric_field": "cpu_percent", "operator": ">", "threshold": 90, "severity": "critical"}'
 ```
@@ -189,14 +241,13 @@ resumen de causa probable y accion recomendada.
 
 ```bash
 # estado del inventario por host
-curl http://localhost:8000/api/v1/inventory/status
+curl -b cookies.txt http://localhost:8000/api/v1/inventory/status
 
 # vulnerabilidades encontradas
-curl http://localhost:8000/api/v1/vulnerabilities
+curl -b cookies.txt http://localhost:8000/api/v1/vulnerabilities
 
-# marcar como revisada (no hay "arreglar" automatico, es informativo)
-curl -X POST http://localhost:8000/api/v1/vulnerabilities/FINDING_ID/acknowledge \
-  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+# marcar como revisada (no hay "arreglar" automatico, es informativo) -- requiere rol admin
+curl -b cookies.txt -X POST http://localhost:8000/api/v1/vulnerabilities/FINDING_ID/acknowledge
 ```
 
 El agente manda el inventario de paquetes cada `inventory_interval_seconds`

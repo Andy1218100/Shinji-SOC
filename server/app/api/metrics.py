@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_host
+from app.api.deps import get_current_host, get_current_user
 from app.core.db import get_db
 from app.models.host import Host
 from app.models.metric import Metric
@@ -26,7 +26,7 @@ async def ingest(
     return {"status": "ok"}
 
 
-@router.get("/hosts/{host_id}/metrics", response_model=list[MetricOut])
+@router.get("/hosts/{host_id}/metrics", response_model=list[MetricOut], dependencies=[Depends(get_current_user)])
 async def get_metrics(
     host_id: str,
     minutes: int = Query(default=60, le=1440),

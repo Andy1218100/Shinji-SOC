@@ -9,17 +9,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/css/app.css" />
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
-  <script>
-    (function () {
-      try {
-        if (!localStorage.getItem("proxsecure_admin_key")) {
-          location.href = "/login?next=" + encodeURIComponent(location.pathname);
-        }
-      } catch (e) {
-        /* storage blocked: let the page load, API calls will 401 and redirect via app.js */
-      }
-    })();
-  </script>
 </head>
 <body>
   <div class="shell">
@@ -44,8 +33,20 @@
           <span class="label">Vulnerabilidades</span>
           <span class="nav-badge" data-nav="vulnerabilities" data-count="0">0</span>
         </a>
+        {% if user and user.role == 'admin' %}
+        <a class="nav-link {{ 'active' if active_nav == 'usuarios' else '' }}" href="/users">
+          {{ icon("users") }}
+          <span class="label">Usuarios</span>
+        </a>
+        {% endif %}
       </nav>
       <div class="sidebar-footer">
+        {% if user %}
+        <div class="sidebar-user">
+          <span class="sidebar-user-name">{{ user.username }}</span>
+          <span class="sidebar-user-role">{{ 'Admin' if user.role == 'admin' else 'Solo lectura' }}</span>
+        </div>
+        {% endif %}
         <button class="signout" data-action="sign-out" type="button">
           {{ icon("logout") }}
           <span>Cerrar sesion</span>

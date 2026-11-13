@@ -10,9 +10,9 @@ web
 
 People who run their own Linux servers and are responsible for both keeping
 them healthy and keeping them safe: the owner themselves, plus a small team
-or clients they administer servers for. Multiple people may use the same
-dashboard. There are currently no per-user accounts or roles — everyone
-shares one admin key.
+or clients they administer servers for. Each person has their own account
+(password + mandatory MFA), with an `admin` or `viewer` role — see
+Capabilities and Constraints.
 
 ## Product Purpose
 
@@ -69,12 +69,17 @@ executes admin-approved actions through narrowly scoped sudo rules
 - Response actions (block IP via fail2ban, kill a process) always require
   manual approval from the dashboard before the agent executes them; there
   is no autonomous blocking path.
-- Access control gap (known, unresolved): the dashboard currently has a
-  single shared `ADMIN_API_KEY`, entered once and stored in the browser's
-  localStorage. No per-user accounts, roles, or audit trail of who approved
-  what. Since the confirmed audience includes a small team/clients, not
-  just a sole operator, this is a real gap to address later, not a
-  decision to build around.
+- Access control (resolved 2026-11-13): individual accounts, each with
+  its own password and mandatory TOTP MFA (enrolled at first login, QR
+  shown only to that person, never relayed by whoever created the
+  account). Two roles — `admin` (full access, including managing other
+  accounts from `/users`) and `viewer` (read everything, act on
+  nothing). The old single shared `ADMIN_API_KEY` is gone entirely,
+  including from scripted/API access. Still missing: no audit trail of
+  who approved/dismissed a specific action (accounts exist, actions
+  don't record which account took them), no password-reset-by-email
+  (no mail service in the project — an admin resets a stuck account's
+  password from `/users` instead).
 - "Learning" from traffic is heuristic — rule matching and counters in a
   sliding window, not a trained ML model. Must not be described as machine
   learning or AI-trained detection in product copy.

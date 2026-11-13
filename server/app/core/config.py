@@ -13,7 +13,17 @@ class Settings(BaseSettings):
     ai_backend: str = "ollama"  # "ollama" o "claude"
     claude_model: str = "claude-sonnet-5-5"
 
-    admin_api_key: str = "change-me-admin-key"
+    # Firma las cookies de sesion (itsdangerous). Cambiala en produccion;
+    # cambiarla invalida todas las sesiones activas (fuerza a volver a
+    # loguearse, no es destructivo).
+    session_secret_key: str = "change-me-session-secret"
+    session_max_age_seconds: int = 60 * 60 * 24  # 24h
+    # Cookies "Secure" (solo se mandan por HTTPS). Dejalo en false para
+    # desarrollo local por HTTP; activalo en produccion detras de HTTPS.
+    session_cookie_secure: bool = False
+
+    login_max_attempts: int = 5
+    login_lockout_seconds: int = 300
 
     alert_eval_interval_seconds: int = 30
 

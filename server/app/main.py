@@ -1,11 +1,14 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ai, alerts, auth, commands, dashboard, hosts, logs, metrics, security, vulnerabilities
+from app.api import ai, alerts, auth, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
+from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, engine
 from app.services.alerting import run_forever as alerting_run_forever
 from app.services.vuln_scan import run_forever as vuln_scan_run_forever
@@ -29,6 +32,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Prox Secure", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
+
+@app.exception_handler(NotAuthenticated)
+async def handle_not_authenticated(request: Request, exc: NotAuthenticated):
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=401, content={"detail": "No autenticado"})
+    next_path = quote(request.url.path)
+    return RedirectResponse(f"/login?next={next_path}", status_code=303)
+
+
+@app.exception_handler(Forbidden)
+async def handle_forbidden(request: Request, exc: Forbidden):
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=403, content={"detail": "No autorizado para este rol"})
+    return RedirectResponse("/", status_code=303)
+
+
 app.include_router(dashboard.router)
 app.include_router(hosts.router)
 app.include_router(metrics.router)
@@ -39,3 +58,4 @@ app.include_router(security.router)
 app.include_router(commands.router)
 app.include_router(auth.router)
 app.include_router(vulnerabilities.router)
+app.include_router(users.router)

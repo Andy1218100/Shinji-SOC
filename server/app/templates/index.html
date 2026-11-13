@@ -39,7 +39,7 @@
     {{ icon("server", "icon") }}
     <h3>Todavia no hay hosts registrados</h3>
     <p>Registra el primero con la API de administracion.</p>
-    <code>curl -X POST /api/v1/hosts -H "X-Admin-Key: ..." -d '{"name":"web-01","hostname":"web-01"}'</code>
+    <code>curl -X POST /api/v1/hosts -b cookies.txt -d '{"name":"web-01","hostname":"web-01"}'</code>
   </div>
   {% endif %}
 </section>

@@ -9,3 +9,6 @@ httpx==0.27.2
 anthropic==0.40.0
 python-multipart==0.0.12
 geoip2==4.8.1
+argon2-cffi==23.1.0
+pyotp==2.9.0
+itsdangerous==2.2.0

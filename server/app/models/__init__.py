@@ -3,6 +3,7 @@ from app.models.metric import Metric
 from app.models.alert import Alert, AlertRule
 from app.models.security import BlockedIP, Command, IngestedRequest, SecurityEvent
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
+from app.models.user import User
 
 __all__ = [
     "Host",
@@ -15,4 +16,5 @@ __all__ = [
     "IngestedRequest",
     "InstalledPackage",
     "VulnerabilityFinding",
+    "User",
 ]

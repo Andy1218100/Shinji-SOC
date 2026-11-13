@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Usuarios · Prox Secure{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Usuarios</h1>
+  <p>Cuentas con acceso al dashboard. Cada una con su propia contrasena y MFA.</p>
+</div>
+
+<section class="panel" id="temp-password-panel" style="display:none; border: 1px solid var(--warn);">
+  <h2 style="color: var(--warn);">Contrasena temporal generada</h2>
+  <p>Se muestra una sola vez. Compartila con <strong id="temp-password-user"></strong> por un canal seguro.</p>
+  <div style="display:flex; align-items:center; gap: var(--space-2);">
+    <code id="temp-password-value" style="font-size: var(--text-md); background: var(--surface-2); padding: 8px 14px; border-radius: var(--radius-sm); flex: 1;"></code>
+    <button class="sm" id="copy-password-btn" type="button">{{ icon("copy", "icon") }} Copiar</button>
+  </div>
+  <button class="sm ghost" id="dismiss-password-btn" type="button" style="margin-top: var(--space-3);">Entendido, ocultar</button>
+</section>
+
+<section class="panel">
+  <h2>Crear usuario</h2>
+  <form id="create-user-form" style="display:flex; gap: var(--space-3); align-items:flex-end; flex-wrap: wrap;">
+    <div>
+      <label for="new-username" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Usuario</label>
+      <input type="text" id="new-username" placeholder="nombre.apellido" style="width: 220px;" />
+    </div>
+    <div>
+      <label for="new-role" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Rol</label>
+      <select id="new-role" style="height: 36px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 0 10px;">
+        <option value="viewer">Solo lectura</option>
+        <option value="admin">Admin</option>
+      </select>
+    </div>
+    <button type="submit" class="primary">Crear</button>
+  </form>
+  <p class="login-error" id="create-user-error"></p>
+</section>
+
+<section class="panel">
+  <h2>Cuentas</h2>
+  <div id="users-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
+</section>
+
+<script>
+function formatDate(iso) {
+  if (!iso) return "nunca";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function showTempPassword(username, password) {
+  document.getElementById("temp-password-user").textContent = username;
+  document.getElementById("temp-password-value").textContent = password;
+  document.getElementById("temp-password-panel").style.display = "block";
+  document.getElementById("temp-password-panel").scrollIntoView({ behavior: "smooth" });
+}
+
+document.getElementById("copy-password-btn").addEventListener("click", async () => {
+  const value = document.getElementById("temp-password-value").textContent;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("Contrasena copiada.", "success");
+  } catch (e) {
+    toast("No se pudo copiar automaticamente, selecciona el texto a mano.", "error");
+  }
+});
+document.getElementById("dismiss-password-btn").addEventListener("click", () => {
+  document.getElementById("temp-password-panel").style.display = "none";
+});
+
+async function loadUsers() {
+  const wrap = document.getElementById("users-wrap");
+  let users;
+  try {
+    const res = await fetch("/api/v1/users");
+    if (!res.ok) throw new Error(String(res.status));
+    users = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar la lista de usuarios.</p></div>`;
+    return;
+  }
+
+  if (users.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><p>Sin usuarios todavia.</p></div>`;
+    return;
+  }
+
+  const rows = users.map((u) => {
+    const statusBadge = u.active
+      ? `<span class="badge ok">activo</span>`
+      : `<span class="badge crit">inactivo</span>`;
+    const mfaText = u.mfa_enabled ? "si" : (u.must_set_password ? "pendiente" : "no");
+    const toggleAction = u.active
+      ? `<button class="sm ghost" data-deactivate="${u.id}">Desactivar</button>`
+      : `<button class="sm ghost" data-reactivate="${u.id}">Reactivar</button>`;
+
+    return `
+      <tr>
+        <td>${u.username}</td>
+        <td>${u.role === "admin" ? "Admin" : "Solo lectura"}</td>
+        <td>${statusBadge}</td>
+        <td>${mfaText}</td>
+        <td>${formatDate(u.created_at)}</td>
+        <td>${formatDate(u.last_login)}</td>
+        <td>
+          <div class="row-actions">
+            ${toggleAction}
+            <button class="sm ghost" data-reset="${u.id}">Resetear contrasena</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join("");
+
+  wrap.innerHTML = `
+    <table class="data users-table">
+      <colgroup>
+        <col style="width:16%"><col style="width:12%"><col style="width:10%">
+        <col style="width:10%"><col style="width:12%"><col style="width:12%"><col style="width:28%">
+      </colgroup>
+      <thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th>MFA</th><th>Creado</th><th>Ultimo login</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  wrap.querySelectorAll("[data-deactivate]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleActive(btn.dataset.deactivate, "deactivate"));
+  });
+  wrap.querySelectorAll("[data-reactivate]").forEach((btn) => {
+    btn.addEventListener("click", () => toggleActive(btn.dataset.reactivate, "reactivate"));
+  });
+  wrap.querySelectorAll("[data-reset]").forEach((btn) => {
+    btn.addEventListener("click", () => resetPassword(btn.dataset.reset));
+  });
+}
+
+async function toggleActive(id, action) {
+  const res = await adminAction(`/api/v1/users/${id}/${action}`);
+  if (res) { toast(action === "deactivate" ? "Usuario desactivado." : "Usuario reactivado.", "success"); loadUsers(); }
+}
+
+async function resetPassword(id) {
+  const res = await adminAction(`/api/v1/users/${id}/reset-password`);
+  if (res) {
+    const data = await res.json();
+    showTempPassword(data.username, data.temporary_password);
+    toast("Contrasena reseteada.", "success");
+    loadUsers();
+  }
+}
+
+document.getElementById("create-user-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const username = document.getElementById("new-username").value.trim();
+  const role = document.getElementById("new-role").value;
+  const errorEl = document.getElementById("create-user-error");
+  errorEl.textContent = "";
+
+  if (username.length < 3) {
+    errorEl.textContent = "El usuario debe tener al menos 3 caracteres.";
+    return;
+  }
+
+  const res = await fetch("/api/v1/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, role }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    errorEl.textContent = data.detail || "No se pudo crear el usuario.";
+    return;
+  }
+
+  document.getElementById("new-username").value = "";
+  showTempPassword(data.username, data.temporary_password);
+  toast("Usuario creado.", "success");
+  loadUsers();
+});
+
+loadUsers();
+</script>
+{% endblock %}

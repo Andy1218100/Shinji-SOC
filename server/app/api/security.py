@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.security import BlockedIP, Command, SecurityEvent
 from app.schemas.security import BlockedIPOut, SecurityEventOut
@@ -12,7 +12,7 @@ from app.schemas.security import BlockedIPOut, SecurityEventOut
 router = APIRouter(prefix="/api/v1", tags=["security"])
 
 
-@router.get("/security-events", response_model=list[SecurityEventOut])
+@router.get("/security-events", response_model=list[SecurityEventOut], dependencies=[Depends(get_current_user)])
 async def list_security_events(
     status: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
@@ -65,7 +65,7 @@ async def dismiss_security_event(event_id: str, db: AsyncSession = Depends(get_d
     return {"status": "ok"}
 
 
-@router.get("/blocked-ips", response_model=list[BlockedIPOut])
+@router.get("/blocked-ips", response_model=list[BlockedIPOut], dependencies=[Depends(get_current_user)])
 async def list_blocked_ips(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(BlockedIP).where(BlockedIP.unblocked_at.is_(None)).order_by(BlockedIP.blocked_at.desc())

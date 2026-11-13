@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
@@ -11,7 +11,7 @@ from app.schemas.vulnerability import InventoryStatusOut, VulnerabilityFindingOu
 router = APIRouter(prefix="/api/v1", tags=["vulnerabilities"])
 
 
-@router.get("/vulnerabilities", response_model=list[VulnerabilityFindingOut])
+@router.get("/vulnerabilities", response_model=list[VulnerabilityFindingOut], dependencies=[Depends(get_current_user)])
 async def list_vulnerabilities(
     status: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
@@ -35,7 +35,7 @@ async def acknowledge_vulnerability(finding_id: str, db: AsyncSession = Depends(
     return {"status": "ok"}
 
 
-@router.get("/inventory/status", response_model=list[InventoryStatusOut])
+@router.get("/inventory/status", response_model=list[InventoryStatusOut], dependencies=[Depends(get_current_user)])
 async def inventory_status(db: AsyncSession = Depends(get_db)):
     hosts = (await db.execute(select(Host))).scalars().all()
     out = []

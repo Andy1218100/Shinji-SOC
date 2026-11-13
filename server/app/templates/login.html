@@ -17,54 +17,185 @@
         {{ icon("shield") }}
         <span>Prox Secure</span>
       </div>
-      <form id="login-form" novalidate>
-        <label for="admin-key">Clave de administrador</label>
-        <input type="password" id="admin-key" name="admin-key" placeholder="ADMIN_API_KEY" autocomplete="current-password" autofocus />
-        <p class="login-error" id="login-error"></p>
+
+      <form id="step-credentials">
+        <label for="username">Usuario</label>
+        <input type="text" id="username" autocomplete="username" autofocus />
+        <label for="password">Contrasena</label>
+        <input type="password" id="password" autocomplete="current-password" />
+        <p class="login-error" id="credentials-error"></p>
         <button type="submit" class="primary">
           {{ icon("lock", "icon") }}
           <span>Entrar</span>
         </button>
       </form>
+
+      <form id="step-mfa" style="display:none;">
+        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
+          Ingresa el codigo de 6 digitos de tu app de autenticacion.
+        </p>
+        <label for="mfa-code">Codigo</label>
+        <input type="text" id="mfa-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+        <p class="login-error" id="mfa-error"></p>
+        <button type="submit" class="primary">
+          <span>Verificar</span>
+        </button>
+      </form>
+
+      <form id="step-setup" style="display:none;">
+        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
+          Primer ingreso: elegi una contrasena nueva y enrola tu app de autenticacion (Google Authenticator, Authy, etc.) escaneando el codigo.
+        </p>
+        <div id="qr-code" style="display:flex; justify-content:center; margin-bottom: var(--space-3); background:#fff; border-radius: var(--radius-md); padding: var(--space-3);"></div>
+        <p style="font-size: var(--text-xs); color: var(--text-muted); word-break: break-all; margin: 0 0 var(--space-3);">
+          Si no podes escanear, cargalo a mano: <code id="mfa-secret-text"></code>
+        </p>
+        <label for="new-password">Contrasena nueva (minimo 10 caracteres)</label>
+        <input type="password" id="new-password" autocomplete="new-password" />
+        <label for="setup-code">Codigo de tu app de autenticacion</label>
+        <input type="text" id="setup-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+        <p class="login-error" id="setup-error"></p>
+        <button type="submit" class="primary">
+          <span>Completar configuracion</span>
+        </button>
+      </form>
     </div>
   </div>
 
-  <script src="/static/js/app.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
   <script>
-    const form = document.getElementById("login-form");
-    const input = document.getElementById("admin-key");
-    const errorEl = document.getElementById("login-error");
+    let pendingToken = null;
 
-    form.addEventListener("submit", async (event) => {
+    function showStep(id) {
+      ["step-credentials", "step-mfa", "step-setup"].forEach((s) => {
+        document.getElementById(s).style.display = s === id ? "block" : "none";
+      });
+    }
+
+    function redirectAfterLogin() {
+      const params = new URLSearchParams(window.location.search);
+      window.location.href = params.get("next") || "/";
+    }
+
+    document.getElementById("step-credentials").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const key = input.value.trim();
+      const username = document.getElementById("username").value.trim();
+      const password = document.getElementById("password").value;
+      const errorEl = document.getElementById("credentials-error");
       errorEl.textContent = "";
 
-      if (!key) {
-        errorEl.textContent = "Ingresa la clave de administrador.";
+      if (!username || !password) {
+        errorEl.textContent = "Completa usuario y contrasena.";
         return;
       }
 
-      const submitBtn = form.querySelector("button[type=submit]");
-      const submitLabel = submitBtn.querySelector("span");
+      const submitBtn = event.target.querySelector("button[type=submit]");
       submitBtn.disabled = true;
-      submitLabel.textContent = "Entrando...";
 
       try {
-        const res = await fetch("/api/v1/auth/check", { headers: { "X-Admin-Key": key } });
-        if (res.ok) {
-          setAdminKey(key);
-          const params = new URLSearchParams(window.location.search);
-          window.location.href = params.get("next") || "/";
+        const res = await fetch("/api/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+          errorEl.textContent = data.detail || "No se pudo iniciar sesion.";
           return;
+        }
+
+        pendingToken = data.pending_token;
+
+        if (data.stage === "setup") {
+          document.getElementById("mfa-secret-text").textContent = data.mfa_secret;
+          showStep("step-setup");
+          document.getElementById("qr-code").innerHTML = "";
+          new QRCode(document.getElementById("qr-code"), {
+            text: data.otpauth_uri,
+            width: 180,
+            height: 180,
+          });
+          document.getElementById("new-password").focus();
         } else {
-          errorEl.textContent = "Clave incorrecta. Revisa ADMIN_API_KEY en tu .env.";
+          showStep("step-mfa");
+          document.getElementById("mfa-code").focus();
         }
       } catch (e) {
         errorEl.textContent = "No se pudo contactar al servidor.";
       } finally {
         submitBtn.disabled = false;
-        submitLabel.textContent = "Entrar";
+      }
+    });
+
+    document.getElementById("step-mfa").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const code = document.getElementById("mfa-code").value.trim();
+      const errorEl = document.getElementById("mfa-error");
+      errorEl.textContent = "";
+
+      if (!code) {
+        errorEl.textContent = "Ingresa el codigo.";
+        return;
+      }
+
+      const submitBtn = event.target.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/v1/auth/mfa/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pending_token: pendingToken, code }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.detail || "Codigo invalido.";
+          return;
+        }
+        redirectAfterLogin();
+      } catch (e) {
+        errorEl.textContent = "No se pudo contactar al servidor.";
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+    document.getElementById("step-setup").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const newPassword = document.getElementById("new-password").value;
+      const mfaCode = document.getElementById("setup-code").value.trim();
+      const errorEl = document.getElementById("setup-error");
+      errorEl.textContent = "";
+
+      if (newPassword.length < 10) {
+        errorEl.textContent = "La contrasena debe tener al menos 10 caracteres.";
+        return;
+      }
+      if (!mfaCode) {
+        errorEl.textContent = "Ingresa el codigo de tu app de autenticacion.";
+        return;
+      }
+
+      const submitBtn = event.target.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch("/api/v1/auth/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pending_token: pendingToken, new_password: newPassword, mfa_code: mfaCode }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.detail || "No se pudo completar la configuracion.";
+          return;
+        }
+        redirectAfterLogin();
+      } catch (e) {
+        errorEl.textContent = "No se pudo contactar al servidor.";
+      } finally {
+        submitBtn.disabled = false;
       }
     });
   </script>

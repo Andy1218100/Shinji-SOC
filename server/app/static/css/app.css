@@ -206,6 +206,20 @@ p {
   border-top: 1px solid var(--border);
   padding-top: var(--space-3);
 }
+.sidebar-user {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) var(--space-3) var(--space-2);
+}
+.sidebar-user-name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.sidebar-user-role {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
 .signout {
   display: flex;
   align-items: center;
@@ -290,6 +304,13 @@ table.data tbody tr:hover {
   table-layout: fixed;
 }
 .vulns-table td {
+  overflow-wrap: break-word;
+  vertical-align: top;
+}
+.users-table {
+  table-layout: fixed;
+}
+.users-table td {
   overflow-wrap: break-word;
   vertical-align: top;
 }

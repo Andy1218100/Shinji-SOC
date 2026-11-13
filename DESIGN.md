@@ -271,8 +271,37 @@ a CSS filter has no such dependency to break.
   accent-tinted background + accent text when active. Icons are hand-
   authored outline SVGs (1.75 stroke, round caps/joins) — no icon font,
   no emoji.
+- **Role-gated items:** a nav link whose destination requires a role
+  (today: "Usuarios", admin-only) is omitted from the DOM entirely for
+  users without it, not disabled or hidden with CSS — there is nothing
+  to discover by inspecting the page.
+- **Sidebar user block:** sits above "Cerrar sesion" in the footer,
+  two lines — username (`text-primary`, 500) over role label
+  (`text-muted`, 12px, "Admin" / "Solo lectura" — the human label, never
+  the raw role string).
 - **Mobile:** the sidebar becomes a horizontal, scrollable bar; the
   active state and badge carry over unchanged.
+
+### Login (multi-step)
+One card, one step visible at a time (the other steps are swapped via
+`display`, never stacked or routed to separate pages): credentials
+(username + password) → either MFA verify (returning user, one 6-digit
+code field) or setup (first login on a temp password — new password
+field, QR code, manual-entry secret fallback, code field, all submitted
+together as one step). The branch is decided by the server's response to
+step one, never guessed client-side. QR renders client-side from the
+`otpauth://` URI the server returns — never sent as an image, the secret
+never touches a server-rendered page twice. Same card chrome as the rest
+of the system (surface-1, 14px radius, border) at a narrower max-width
+than a panel, centered on `surface-0`.
+
+### Reveal panel (one-time secret)
+For a value only shown once (a generated temporary password): not a
+toast — a toast's 4.5s auto-dismiss isn't enough time to read and copy
+a password. A persistent panel instead, `warn`-colored border so it
+reads as "handle this," the secret in a monospace-set `<code>` tile
+plus an explicit copy button, and a manual "Entendido, ocultar" dismiss
+— the user closes it, it never times out on its own.
 
 ### Toast (replaces blocking alerts)
 Fixed bottom-right stack, one per action result, auto-dismiss after
@@ -297,6 +326,9 @@ No colored left bar; the whole hairline recolors instead.
   exist (e.g. a "Version corregida" column beside an AI recommendation
   paragraph), and say in the UI which one to trust — a small local model
   occasionally gets a number wrong even when told the real one.
+- **Do** put a one-time secret (a generated password, a QR/MFA setup) in
+  a persistent reveal panel with a manual dismiss — never a toast, never
+  anything that disappears before a person can realistically copy it.
 
 ### Don't:
 - **Don't** add a shadow to a panel, card, or table row — depth comes
@@ -307,3 +339,5 @@ No colored left bar; the whole hairline recolors instead.
   feedback; use the toast system.
 - **Don't** reach for a card-grid layout where a table would scan
   faster — this is an Operate surface, not a marketing page.
+- **Don't** render a role-gated nav item and hide it with CSS for users
+  who lack the role — omit it from the template entirely.

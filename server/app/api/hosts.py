@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import require_admin
+from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.host import Host
 from app.schemas.host import HostCreate, HostCreated, HostOut
@@ -35,13 +35,13 @@ async def create_host(payload: HostCreate, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("", response_model=list[HostOut])
+@router.get("", response_model=list[HostOut], dependencies=[Depends(get_current_user)])
 async def list_hosts(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Host).order_by(Host.name))
     return [HostOut.model_validate(h) for h in result.scalars().all()]
 
 
-@router.get("/{host_id}", response_model=HostOut)
+@router.get("/{host_id}", response_model=HostOut, dependencies=[Depends(get_current_user)])
 async def get_host(host_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Host).where(Host.id == host_id))
     host = result.scalar_one_or_none()

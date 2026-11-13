@@ -1,44 +1,13 @@
-// Prox Secure — shared client behavior: auth guard, toasts, sidebar badge.
+// Prox Secure — shared client behavior: toasts, sign-out, sidebar badges.
+// La sesion vive en una cookie HttpOnly (no en localStorage): el navegador
+// la manda sola en cada fetch del mismo origen, el JS nunca la toca.
 
-const AUTH_KEY = "proxsecure_admin_key";
-
-function getAdminKey() {
+async function signOut() {
   try {
-    return localStorage.getItem(AUTH_KEY) || "";
+    await fetch("/api/v1/auth/logout", { method: "POST" });
   } catch (e) {
-    return "";
+    /* si falla igual mandamos al login */
   }
-}
-
-function setAdminKey(value) {
-  try {
-    localStorage.setItem(AUTH_KEY, value);
-  } catch (e) {
-    /* private browsing / storage blocked: session still works, just not remembered */
-  }
-}
-
-function clearAdminKey() {
-  try {
-    localStorage.removeItem(AUTH_KEY);
-  } catch (e) {
-    /* nothing to clear */
-  }
-}
-
-function adminHeaders() {
-  return { "X-Admin-Key": getAdminKey() };
-}
-
-function requireAuth() {
-  if (!getAdminKey()) {
-    const next = encodeURIComponent(window.location.pathname);
-    window.location.href = `/login?next=${next}`;
-  }
-}
-
-function signOut() {
-  clearAdminKey();
   window.location.href = "/login";
 }
 
@@ -57,14 +26,14 @@ function toast(message, variant = "default") {
 }
 
 async function adminAction(url, method = "POST") {
-  if (!getAdminKey()) {
-    toast("Inicia sesion para hacer esto.", "error");
+  const res = await fetch(url, { method });
+  if (res.status === 401) {
+    toast("Tu sesion expiro. Inicia sesion de nuevo.", "error");
+    window.location.href = "/login?next=" + encodeURIComponent(window.location.pathname);
     return null;
   }
-  const res = await fetch(url, { method, headers: adminHeaders() });
-  if (res.status === 401) {
-    toast("Tu clave ya no es valida. Inicia sesion de nuevo.", "error");
-    clearAdminKey();
+  if (res.status === 403) {
+    toast("Tu cuenta no tiene permiso para esta accion (rol solo lectura).", "error");
     return null;
   }
   if (!res.ok) {
@@ -79,6 +48,7 @@ async function refreshNavBadgeFor(navName, url) {
   if (!badge) return;
   try {
     const res = await fetch(url);
+    if (!res.ok) return;
     const items = await res.json();
     badge.textContent = items.length;
     badge.dataset.count = String(items.length);
