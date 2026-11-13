@@ -4,6 +4,16 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
 <section>
+  <h2>Clave de administrador</h2>
+  <p style="color:#9aa0b4; font-size:0.85rem;">
+    Necesaria para aprobar, descartar o desbloquear. Se guarda solo en este navegador (localStorage).
+  </p>
+  <input type="password" id="admin-key-input" placeholder="ADMIN_API_KEY" style="width: 320px;" />
+  <button onclick="saveAdminKey()">Guardar</button>
+  <span id="admin-key-status" style="margin-left: 0.5rem; color:#9aa0b4; font-size:0.85rem;"></span>
+</section>
+
+<section>
   <h2>Mapa de origenes de ataque</h2>
   <div id="map" style="height: 380px; border-radius: 0.5rem;"></div>
   <p style="color:#9aa0b4; font-size:0.85rem;">
@@ -36,13 +46,22 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 function adminKey() {
-  let key = localStorage.getItem('proxsecure_admin_key');
-  if (!key) {
-    key = prompt('Clave admin (ADMIN_API_KEY del .env), se guarda solo en este navegador:');
-    if (key) localStorage.setItem('proxsecure_admin_key', key);
-  }
-  return key || '';
+  return localStorage.getItem('proxsecure_admin_key') || '';
 }
+
+function saveAdminKey() {
+  const value = document.getElementById('admin-key-input').value.trim();
+  if (value) {
+    localStorage.setItem('proxsecure_admin_key', value);
+    updateAdminKeyStatus();
+  }
+}
+
+function updateAdminKeyStatus() {
+  const status = document.getElementById('admin-key-status');
+  status.textContent = adminKey() ? 'Clave guardada en este navegador.' : 'Sin clave guardada todavia.';
+}
+updateAdminKeyStatus();
 
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 
@@ -112,17 +131,27 @@ async function loadBlocked() {
   }
 }
 
+async function adminAction(url) {
+  if (!adminKey()) {
+    alert('Primero guarda la ADMIN_API_KEY arriba.');
+    return false;
+  }
+  const res = await fetch(url, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
+  if (!res.ok) {
+    alert(`La accion fallo (HTTP ${res.status}). Revisa que la clave sea correcta.`);
+    return false;
+  }
+  return true;
+}
+
 async function approve(id) {
-  await fetch(`/api/v1/security-events/${id}/approve`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
-  loadEvents();
+  if (await adminAction(`/api/v1/security-events/${id}/approve`)) loadEvents();
 }
 async function dismiss(id) {
-  await fetch(`/api/v1/security-events/${id}/dismiss`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
-  loadEvents();
+  if (await adminAction(`/api/v1/security-events/${id}/dismiss`)) loadEvents();
 }
 async function unblock(id) {
-  await fetch(`/api/v1/blocked-ips/${id}/unblock`, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
-  loadBlocked();
+  if (await adminAction(`/api/v1/blocked-ips/${id}/unblock`)) loadBlocked();
 }
 
 loadEvents();
