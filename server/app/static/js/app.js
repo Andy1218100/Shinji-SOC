@@ -74,17 +74,22 @@ async function adminAction(url, method = "POST") {
   return res;
 }
 
-async function refreshNavBadge() {
-  const badge = document.querySelector('.nav-badge[data-nav="security"]');
+async function refreshNavBadgeFor(navName, url) {
+  const badge = document.querySelector(`.nav-badge[data-nav="${navName}"]`);
   if (!badge) return;
   try {
-    const res = await fetch("/api/v1/security-events?status=open");
-    const events = await res.json();
-    badge.textContent = events.length;
-    badge.dataset.count = String(events.length);
+    const res = await fetch(url);
+    const items = await res.json();
+    badge.textContent = items.length;
+    badge.dataset.count = String(items.length);
   } catch (e) {
     /* badge stays at its last known value */
   }
+}
+
+function refreshNavBadge() {
+  refreshNavBadgeFor("security", "/api/v1/security-events?status=open");
+  refreshNavBadgeFor("vulnerabilities", "/api/v1/vulnerabilities?status=open");
 }
 
 document.addEventListener("DOMContentLoaded", () => {

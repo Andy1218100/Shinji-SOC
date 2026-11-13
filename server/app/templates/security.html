@@ -3,6 +3,8 @@
 {% block title %}Seguridad · Prox Secure{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
 <div class="page-header">
   <h1>Seguridad</h1>
@@ -11,10 +13,18 @@
 
 <section class="panel">
   <h2>Mapa de origenes de ataque</h2>
+  <div class="stat-grid" id="attack-stats">
+    <div class="stat-tile"><div class="stat-label">Total eventos</div><div class="stat-value">-</div></div>
+    <div class="stat-tile crit"><div class="stat-label">Criticos</div><div class="stat-value">-</div></div>
+    <div class="stat-tile warn"><div class="stat-label">Advertencias</div><div class="stat-value">-</div></div>
+    <div class="stat-tile"><div class="stat-label">Origenes unicos</div><div class="stat-value">-</div></div>
+  </div>
   <div id="map" style="height: 360px;"></div>
   <p style="font-size: var(--text-xs); margin-top: var(--space-2);">
     Sin base GeoIP configurada (MaxMind), los eventos aparecen en la lista pero sin punto en el mapa.
   </p>
+  <h3 style="margin-top: var(--space-4);">Origenes mas activos</h3>
+  <div id="origins-list" class="origins-list"></div>
 </section>
 
 <section class="panel">
@@ -32,6 +42,7 @@
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script>
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 
@@ -41,12 +52,59 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18,
   className: 'map-tiles-dark',
 }).addTo(map);
-map._proxLayers = [];
+
+const clusterGroup = L.markerClusterGroup({
+  iconCreateFunction: (cluster) => L.divIcon({
+    html: `<div class="cluster-icon" style="width:36px;height:36px;">${cluster.getChildCount()}</div>`,
+    className: '',
+    iconSize: [36, 36],
+  }),
+});
+map.addLayer(clusterGroup);
 
 function formatDate(iso) {
   const d = new Date(iso);
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function updateStats(events) {
+  const tiles = document.querySelectorAll('#attack-stats .stat-value');
+  const critical = events.filter(e => e.severity === 'critical').length;
+  const warning = events.filter(e => e.severity === 'warning').length;
+  const uniqueOrigins = new Set(events.map(e => e.source_ip).filter(Boolean)).size;
+  tiles[0].textContent = events.length;
+  tiles[1].textContent = critical;
+  tiles[2].textContent = warning;
+  tiles[3].textContent = uniqueOrigins;
+}
+
+function updateOrigins(events) {
+  const el = document.getElementById('origins-list');
+  const counts = new Map();
+  for (const ev of events) {
+    if (!ev.source_ip || ev.source_ip.startsWith('local:')) continue;
+    const key = ev.source_ip;
+    const entry = counts.get(key) || { count: 0, geo: null };
+    entry.count += 1;
+    if (ev.geo_country) entry.geo = `${ev.geo_city || ''} ${ev.geo_country}`.trim();
+    counts.set(key, entry);
+  }
+
+  const top = [...counts.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 5);
+
+  if (top.length === 0) {
+    el.innerHTML = `<p style="color: var(--text-muted); font-size: var(--text-sm);">Sin origenes externos todavia.</p>`;
+    return;
+  }
+
+  el.innerHTML = top.map(([ip, entry], i) => `
+    <div class="origins-row">
+      <span class="origins-rank">${i + 1}</span>
+      <span class="origins-ip">${ip}</span>
+      ${entry.geo ? `<span class="origins-geo">${entry.geo}</span>` : ''}
+      <span class="origins-count">${entry.count}</span>
+    </div>`).join('');
 }
 
 async function loadEvents() {
@@ -61,8 +119,9 @@ async function loadEvents() {
     return;
   }
 
-  for (const layer of map._proxLayers) map.removeLayer(layer);
-  map._proxLayers = [];
+  updateStats(events);
+  updateOrigins(events);
+  clusterGroup.clearLayers();
 
   if (events.length === 0) {
     wrap.innerHTML = `
@@ -87,8 +146,8 @@ async function loadEvents() {
         radius: 7,
         color: sev === 'crit' ? '#e5595c' : '#e0a030',
         fillOpacity: 0.6,
-      }).bindPopup(`${ev.source_ip}<br>${ev.kind}`).addTo(map);
-      map._proxLayers.push(marker);
+      }).bindPopup(`${ev.source_ip}<br>${ev.kind}`);
+      clusterGroup.addLayer(marker);
     }
 
     return `

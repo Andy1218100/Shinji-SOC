@@ -15,6 +15,7 @@ _DEFAULTS = {
     "process_watch": {"interval_seconds": 10, "service_users": []},
     "command_poll_interval_seconds": 10,
     "fail2ban_jail": "proxsecure",
+    "inventory_interval_seconds": 86400,
 }
 
 

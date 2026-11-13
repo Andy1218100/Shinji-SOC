@@ -212,14 +212,47 @@ a panel.
 ### Badges
 - **Severity badge:** tinted background (`--{ok,warn,crit}-bg`) with
   solid text in the matching hue — never a solid fill with white text.
-- **Nav badge:** solid crit-tinted pill, used only for the open-event
-  count; hides itself at zero (`data-count="0"`) rather than showing an
-  empty "0".
+- **Nav badge:** solid crit-tinted pill, one per nav item that tracks an
+  open count (open security events, open vulnerability findings); hides
+  itself at zero (`data-count="0"`) rather than showing an empty "0".
 
 ### Status (dot + label)
 Every host/host-row status is a colored 8px dot plus a text label in
 the matching color, always together. This is the one rule in the whole
 system that cannot be relaxed: color alone is never the only signal.
+
+### Stat tiles
+Compact counts, not a marketing hero: `surface-2` background, `10px`
+radius, a muted uppercase 12px label over a 22px/600 tabular-nums
+number. Laid out in an auto-fit grid (`minmax(140px, 1fr)`) so they
+reflow from a row to 2×2 on narrow widths without a breakpoint. The
+number recolors to `ok`/`warn`/`crit` only when the tile's own meaning
+is that status (e.g. the "Criticos" tile); a plain count ("Total
+eventos") stays `text-primary`. Used for the attack-map summary
+(Seguridad); the same pattern is the one to reach for anywhere else a
+page needs "N of something" at a glance — never a full dashboard-style
+hero metric.
+
+### Ranked list (top origins)
+Rows, not a table, for "top N" lists where the only columns are a rank,
+an identifier, and a count: `origins-row` (padding, `surface-2` on
+hover), a muted rank number, the identifier at `flex:1`, and a pill
+count badge (`surface-3` background, `999px` radius) right-aligned.
+Reach for this instead of a table when there's no second dimension to
+show per row.
+
+### Map (clusters)
+Leaflet with `leaflet.markercluster`, restyled from its default
+bright green/yellow/orange to the one accent color: `.cluster-icon` is
+an `accent-bg`-filled, `accent`-bordered circle with a tabular-nums
+count, no severity-based coloring (a cluster mixes severities, so it
+reads as "N events here", not a status). Individual markers below
+cluster threshold keep per-severity color (`crit`/`warn`) as circle
+markers. Tiles are plain OSM, darkened with a CSS `filter` on the tile
+pane only (`invert(1) hue-rotate(180deg) brightness(.92) contrast(.92)
+saturate(.9)`) — chosen over a hosted dark-tile provider because one
+(CartoDB's free `dark_all`) started requiring an API key mid-project;
+a CSS filter has no such dependency to break.
 
 ### Cards / Panels
 - **Corner:** 14px.
@@ -260,6 +293,10 @@ No colored left bar; the whole hairline recolors instead.
 - **Do** theme the browser-native surfaces (selection, scrollbar, focus
   ring) from the token set — a page assembled from defaults is the
   cheapest tell that it wasn't designed.
+- **Do** show the structured fact next to AI-generated prose when both
+  exist (e.g. a "Version corregida" column beside an AI recommendation
+  paragraph), and say in the UI which one to trust — a small local model
+  occasionally gets a number wrong even when told the real one.
 
 ### Don't:
 - **Don't** add a shadow to a panel, card, or table row — depth comes

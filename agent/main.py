@@ -3,6 +3,8 @@
 - metrics_loop: CPU/mem/disco/red del host (siempre activo).
 - logs_loop: tail de logs de acceso web, para el motor IDS del servidor.
 - process_loop: vigilancia de cuentas de servicio (webshell/RCE).
+- inventory_loop: paquetes instalados (dpkg), una vez al dia por defecto,
+  para que el servidor los cruce contra OSV.dev.
 - commands_loop: ejecuta bloqueos/kills aprobados desde el panel.
 
 Corre sin privilegios salvo las acciones puntuales de commands.py, que
@@ -16,6 +18,7 @@ import httpx
 
 import commands
 import config
+import inventory
 import log_tailer
 import metrics
 import process_watch
@@ -68,6 +71,21 @@ async def process_loop(client: httpx.AsyncClient, base_url: str, headers: dict, 
         await asyncio.sleep(interval)
 
 
+async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
+    while True:
+        try:
+            packages = inventory.collect()
+            if packages:
+                payload = {"packages": packages, "debian_release": inventory.debian_release()}
+                resp = await client.post(
+                    f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers
+                )
+                resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo enviando inventario de paquetes")
+        await asyncio.sleep(interval)
+
+
 async def commands_loop(
     client: httpx.AsyncClient, base_url: str, headers: dict, interval: int, fail2ban_jail: str
 ) -> None:
@@ -91,6 +109,7 @@ async def main() -> None:
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
             logs_loop(client, base_url, headers, cfg["log_paths"]),
             process_loop(client, base_url, headers, cfg["process_watch"]),
+            inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
         )
 

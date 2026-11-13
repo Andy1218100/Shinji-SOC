@@ -27,5 +27,9 @@ class Settings(BaseSettings):
     ids_requests_threshold: int = 50  # requests de una misma IP en la ventana -> flood/fuerza bruta
     ids_404_threshold: int = 15  # 404s de una misma IP en la ventana -> escaneo
 
+    # Escaneo de vulnerabilidades (OSV.dev) sobre el inventario de paquetes
+    # que reporta el agente. Una vez al dia por defecto.
+    vuln_scan_interval_seconds: int = 86400
+
 
 settings = Settings()

@@ -75,6 +75,13 @@ async def security_page(request: Request):
     )
 
 
+@router.get("/vulnerabilities")
+async def vulnerabilities_page(request: Request):
+    return templates.TemplateResponse(
+        "vulnerabilities.html", {"request": request, "active_nav": "vulnerabilidades"}
+    )
+
+
 @router.get("/login")
 async def login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})

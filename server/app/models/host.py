@@ -16,6 +16,7 @@ class Host(Base):
     hostname: Mapped[str] = mapped_column(String(255))
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     os: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    debian_release: Mapped[str | None] = mapped_column(String(16), nullable=True)
     api_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

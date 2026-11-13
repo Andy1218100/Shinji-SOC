@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Vulnerabilidades · Prox Secure{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Vulnerabilidades</h1>
+  <p>Software instalado cruzado contra OSV.dev (CVEs reales), con recomendacion de la IA. Se revisa una vez al dia.</p>
+  <p style="font-size: var(--text-xs); color: var(--text-muted);">
+    "Version corregida" es el dato real de OSV.dev. La recomendacion de la IA es prosa generada por un modelo chico: puede equivocarse en un numero; si no coinciden, confia en "Version corregida".
+  </p>
+</div>
+
+<section class="panel">
+  <h2>Inventario por host</h2>
+  <div id="inventory-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Vulnerabilidades encontradas</h2>
+  <div id="vulns-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
+</section>
+
+<script>
+const severityClass = { critical: 'crit', warning: 'warn' };
+let hostNames = {};
+
+function formatDate(iso) {
+  if (!iso) return 'nunca';
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadHostNames() {
+  try {
+    const res = await fetch('/api/v1/hosts');
+    const hosts = await res.json();
+    hostNames = Object.fromEntries(hosts.map(h => [h.id, h.name]));
+  } catch (e) {
+    hostNames = {};
+  }
+}
+
+async function loadInventoryStatus() {
+  const wrap = document.getElementById('inventory-wrap');
+  let rows;
+  try {
+    const res = await fetch('/api/v1/inventory/status');
+    if (!res.ok) throw new Error(String(res.status));
+    rows = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar el estado del inventario.</p></div>`;
+    return;
+  }
+
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><p>Sin hosts registrados todavia.</p></div>`;
+    return;
+  }
+
+  const body = rows.map(r => `
+    <tr>
+      <td>${r.host_name}</td>
+      <td>${r.package_count}</td>
+      <td>${formatDate(r.last_collected)}</td>
+    </tr>`).join('');
+
+  wrap.innerHTML = `
+    <table class="data">
+      <thead><tr><th>Host</th><th>Paquetes reportados</th><th>Ultimo reporte</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+}
+
+async function loadVulnerabilities() {
+  const wrap = document.getElementById('vulns-wrap');
+  let findings;
+  try {
+    const res = await fetch('/api/v1/vulnerabilities');
+    if (!res.ok) throw new Error(String(res.status));
+    findings = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar las vulnerabilidades.</p></div>`;
+    return;
+  }
+
+  if (findings.length === 0) {
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <p>Sin vulnerabilidades conocidas todavia. El primer escaneo corre poco despues de que un host reporte su inventario, y despues una vez al dia.</p>
+      </div>`;
+    return;
+  }
+
+  const rows = findings.map(f => {
+    const sev = severityClass[f.severity] || 'warn';
+    const canAct = f.status === 'open';
+    const action = canAct
+      ? `<button class="sm ghost" data-ack="${f.id}">Reconocer</button>`
+      : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${f.status}</span>`;
+
+    return `
+      <tr>
+        <td>${hostNames[f.host_id] || f.host_id}</td>
+        <td>${f.package_name} <span style="color:var(--text-muted)">${f.package_version}</span></td>
+        <td><a href="${f.source_url || '#'}" target="_blank" rel="noopener">${f.vuln_id}</a></td>
+        <td><span class="badge ${sev}">${f.severity}</span></td>
+        <td>${f.ai_recommendation || f.summary || '<span style="color:var(--text-muted)">sin resumen</span>'}</td>
+        <td>${f.fixed_version || '-'}</td>
+        <td>${action}</td>
+      </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table class="data vulns-table">
+      <colgroup>
+        <col style="width:11%"><col style="width:16%"><col style="width:11%">
+        <col style="width:8%"><col style="width:38%"><col style="width:9%"><col style="width:7%">
+      </colgroup>
+      <thead><tr><th>Host</th><th>Paquete</th><th>Vulnerabilidad</th><th>Severidad</th><th>Recomendacion</th><th>Version corregida</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  wrap.querySelectorAll('[data-ack]').forEach(btn => {
+    btn.addEventListener('click', () => acknowledge(btn.dataset.ack));
+  });
+}
+
+async function acknowledge(id) {
+  const res = await adminAction(`/api/v1/vulnerabilities/${id}/acknowledge`);
+  if (res) { toast('Marcado como reconocido.', 'success'); loadVulnerabilities(); }
+}
+
+(async () => {
+  await loadHostNames();
+  loadInventoryStatus();
+  loadVulnerabilities();
+})();
+setInterval(loadInventoryStatus, 30000);
+setInterval(loadVulnerabilities, 30000);
+</script>
+{% endblock %}

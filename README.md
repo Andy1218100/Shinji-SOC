@@ -21,8 +21,18 @@ conteos, no un modelo de ML entrenado) que marca:
 
 Cada deteccion genera un evento con una explicacion en lenguaje natural
 (IA) y una accion sugerida (bloquear IP o matar el proceso), geolocalizada
-en un mapa interactivo si configuras GeoIP. **Nada se bloquea solo**: el
+en un mapa interactivo (con clusters y metricas: total, criticos,
+origenes mas activos) si configuras GeoIP. **Nada se bloquea solo**: el
 administrador aprueba cada accion desde `/security` y ahi se ejecuta.
+
+**Vulnerabilidades de software**: el agente reporta una vez al dia el
+inventario de paquetes instalados (`dpkg`). El servidor lo cruza contra
+[OSV.dev](https://osv.dev) (base de datos de CVEs real, gratis, sin
+cuenta) y, por cada vulnerabilidad real que encuentra, pide a la IA una
+recomendacion de 2-3 frases (que version instalar, o como mitigar si
+todavia no hay parche) **a partir de los datos que ya trajo de OSV** --
+la IA nunca decide por su cuenta si algo es vulnerable. Se ve en
+`/vulnerabilities`.
 
 ## Limitaciones reales (leer antes de confiar en esto en produccion)
 
@@ -38,24 +48,42 @@ administrador aprueba cada accion desde `/security` y ahi se ejecuta.
 - El bloqueo usa fail2ban con un jail dedicado (`proxsecure`) que no tiene
   deteccion propia, solo recibe bloqueos manuales desde el panel. Requiere
   fail2ban instalado en el host (lo instala `install.sh`).
-- No hay sistema de login real en el dashboard todavia: las acciones de
-  aprobar/bloquear piden la `ADMIN_API_KEY` una vez y la guardan en
-  `localStorage` del navegador. Pensado para uso propio en red interna,
-  no para exponer el dashboard a internet sin un proxy con auth adelante.
+- El login (`/login`) solo verifica la misma `ADMIN_API_KEY` compartida
+  de siempre -- no hay cuentas ni roles individuales todavia, es una UI
+  mejor sobre el mismo modelo de acceso. Pensado para uso propio en red
+  interna, no para exponer el dashboard a internet sin un proxy con auth
+  adelante.
 - El mapa de ataques necesita que configures una license key de MaxMind
   (gratis); sin eso, los eventos se ven en la lista pero sin punto en el
   mapa.
+- El escaneo de vulnerabilidades necesita que el agente reporte primero
+  su version de Debian (`/etc/os-release`); sin eso, ese host se
+  salta el escaneo a proposito en vez de arriesgar comparar versiones
+  contra el ecosistema equivocado de OSV.dev (Debian:11 vs Debian:12,
+  por ejemplo) y generar falsos positivos/negativos.
+- La recomendacion de IA a veces inventa un numero de version que no
+  le dimos, aun con la instruccion explicita de no hacerlo (es un
+  modelo de 3B, no es perfecto). El campo `fixed_version` es el dato
+  real que vino de OSV.dev; si el texto de la IA menciona otra version,
+  confiar en `fixed_version`, no en la prosa.
+- No hay sistema de migraciones (Alembic ni similar): `create_all` solo
+  crea tablas nuevas, nunca agrega columnas a una tabla existente. Si
+  actualizas desde una base de datos vieja y algo tira
+  `UndefinedColumnError`, hay que alterar la tabla a mano o recrear el
+  volumen de Postgres.
 
 ## Componentes
 
-- `server/`: API + dashboard (FastAPI, Python). Recibe metricas y logs,
-  evalua reglas de alerta y el motor IDS, guarda todo en
+- `server/`: API + dashboard (FastAPI, Python). Recibe metricas, logs e
+  inventario de paquetes, evalua reglas de alerta y el motor IDS, cruza
+  el inventario contra OSV.dev una vez al dia, guarda todo en
   PostgreSQL/TimescaleDB, resuelve GeoIP y expone un endpoint de IA para
   preguntar sobre el estado de los hosts.
 - `agent/`: agente Python (un solo proceso, varias tareas async) que se
   instala en cada servidor Linux: envia metricas, lee logs de acceso,
-  vigila procesos de cuentas de servicio y ejecuta (via sudo acotado) los
-  bloqueos/kills que el administrador aprueba.
+  vigila procesos de cuentas de servicio, reporta el inventario de
+  paquetes (`dpkg`) y ejecuta (via sudo acotado) los bloqueos/kills que
+  el administrador aprueba.
 - `docker-compose.yml`: levanta base de datos, Ollama y el servidor.
 
 ## Requisitos
@@ -156,6 +184,27 @@ Un rule sin `host_id` aplica a todos los hosts. El servidor evalua las
 reglas cada `ALERT_EVAL_INTERVAL_SECONDS` (30s por defecto) y, al disparar
 una alerta, pide al backend de IA configurado (Ollama por defecto) un
 resumen de causa probable y accion recomendada.
+
+## Vulnerabilidades de software
+
+```bash
+# estado del inventario por host
+curl http://localhost:8000/api/v1/inventory/status
+
+# vulnerabilidades encontradas
+curl http://localhost:8000/api/v1/vulnerabilities
+
+# marcar como revisada (no hay "arreglar" automatico, es informativo)
+curl -X POST http://localhost:8000/api/v1/vulnerabilities/FINDING_ID/acknowledge \
+  -H "X-Admin-Key: TU_ADMIN_API_KEY"
+```
+
+El agente manda el inventario de paquetes cada `inventory_interval_seconds`
+(1 dia por defecto, `agent/config.example.yaml`). El servidor escanea
+todos los hosts cada `VULN_SCAN_INTERVAL_SECONDS` (tambien 1 dia) contra
+OSV.dev. El primer escaneo util necesita que el agente ya haya mandado
+al menos un inventario -- no hay nada que ver en `/vulnerabilities`
+hasta entonces.
 
 ## IA: Ollama local vs Claude
 

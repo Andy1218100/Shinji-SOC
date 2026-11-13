@@ -39,6 +39,11 @@
           <span class="label">Seguridad</span>
           <span class="nav-badge" data-nav="security" data-count="0">0</span>
         </a>
+        <a class="nav-link {{ 'active' if active_nav == 'vulnerabilidades' else '' }}" href="/vulnerabilities">
+          {{ icon("package") }}
+          <span class="label">Vulnerabilidades</span>
+          <span class="nav-badge" data-nav="vulnerabilities" data-count="0">0</span>
+        </a>
       </nav>
       <div class="sidebar-footer">
         <button class="signout" data-action="sign-out" type="button">

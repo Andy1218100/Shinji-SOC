@@ -26,3 +26,13 @@ class ProcessEventIn(BaseModel):
 
 class ProcessEventBatchIn(BaseModel):
     events: list[ProcessEventIn]
+
+
+class PackageIn(BaseModel):
+    name: str
+    version: str
+
+
+class InventoryIn(BaseModel):
+    packages: list[PackageIn]
+    debian_release: str | None = None  # VERSION_ID de /etc/os-release, ej. "11"

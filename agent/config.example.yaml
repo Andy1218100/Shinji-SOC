@@ -18,6 +18,10 @@ process_watch:
     - nginx
     - apache
 
+# Inventario de paquetes (dpkg) para el escaneo diario de vulnerabilidades
+# en el servidor (OSV.dev). 86400s = 1 vez al dia.
+inventory_interval_seconds: 86400
+
 command_poll_interval_seconds: 10
 
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
