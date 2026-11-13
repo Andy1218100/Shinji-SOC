@@ -2,25 +2,23 @@
 {% block title %}{{ host.name if host else "Host" }} · Prox Secure{% endblock %}
 {% block content %}
 {% if host %}
-<section>
-  <h2>{{ host.name }}</h2>
-  <p>{{ host.hostname }} &middot; {{ host.ip_address or "" }} &middot; {{ host.os or "" }}</p>
+<div class="page-header">
+  <h1>{{ host.name }}</h1>
+  <p>{{ host.hostname }}{% if host.ip_address %} · {{ host.ip_address }}{% endif %}{% if host.os %} · {{ host.os }}{% endif %}</p>
+</div>
+
+<section class="panel">
+  <h2>Metricas (ultima hora)</h2>
+  <canvas id="chart" height="90"></canvas>
 </section>
 
-<section>
-  <h3>Metricas (ultima hora)</h3>
-  <canvas id="chart" height="100"></canvas>
-</section>
-
-<section>
-  <h3>Preguntar a la IA</h3>
-  <form hx-post="/api/v1/ai/ask" hx-ext="json-enc" hx-target="#ai-answer" hx-swap="innerHTML"
-        onsubmit="event.preventDefault(); askAi();">
-    <input type="hidden" id="host_id" value="{{ host.id }}" />
+<section class="panel">
+  <h2>Preguntar a la IA</h2>
+  <form id="ask-form">
     <input type="text" id="question" placeholder="Ej: por que subio el uso de CPU?" style="width: 60%;" />
-    <button type="submit">Preguntar</button>
+    <button type="submit" class="primary">Preguntar</button>
   </form>
-  <pre id="ai-answer"></pre>
+  <p id="ai-answer" style="color: var(--text-primary); margin-top: var(--space-3);"></p>
 </section>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -28,34 +26,50 @@
 async function loadMetrics() {
   const res = await fetch(`/api/v1/hosts/{{ host.id }}/metrics?minutes=60`);
   const data = await res.json();
-  const labels = data.map(d => d.ts);
+  const labels = data.map(d => new Date(d.ts).toLocaleTimeString());
+  const css = getComputedStyle(document.documentElement);
   new Chart(document.getElementById('chart'), {
     type: 'line',
     data: {
       labels,
       datasets: [
-        { label: 'CPU %', data: data.map(d => d.cpu_percent), borderColor: '#6cb6ff', tension: 0.3 },
-        { label: 'Mem %', data: data.map(d => d.mem_percent), borderColor: '#ffb86c', tension: 0.3 },
-        { label: 'Disco %', data: data.map(d => d.disk_percent), borderColor: '#9cff6c', tension: 0.3 },
+        { label: 'CPU %', data: data.map(d => d.cpu_percent), borderColor: css.getPropertyValue('--accent'), tension: 0.3 },
+        { label: 'Mem %', data: data.map(d => d.mem_percent), borderColor: css.getPropertyValue('--warn'), tension: 0.3 },
+        { label: 'Disco %', data: data.map(d => d.disk_percent), borderColor: css.getPropertyValue('--ok'), tension: 0.3 },
       ],
+    },
+    options: {
+      plugins: { legend: { labels: { color: css.getPropertyValue('--text-secondary') } } },
+      scales: {
+        x: { ticks: { color: css.getPropertyValue('--text-muted') }, grid: { color: css.getPropertyValue('--border') } },
+        y: { ticks: { color: css.getPropertyValue('--text-muted') }, grid: { color: css.getPropertyValue('--border') } },
+      },
     },
   });
 }
 loadMetrics();
 
-async function askAi() {
-  const question = document.getElementById('question').value;
-  const host_id = document.getElementById('host_id').value;
+document.getElementById('ask-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const question = document.getElementById('question').value.trim();
+  const answerEl = document.getElementById('ai-answer');
+  if (!question) {
+    toast('Escribe una pregunta primero.', 'error');
+    return;
+  }
+  answerEl.textContent = 'Pensando...';
   const res = await fetch('/api/v1/ai/ask', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, host_id }),
+    body: JSON.stringify({ question, host_id: '{{ host.id }}' }),
   });
   const data = await res.json();
-  document.getElementById('ai-answer').textContent = data.answer || JSON.stringify(data);
-}
+  answerEl.textContent = data.answer || JSON.stringify(data);
+});
 </script>
 {% else %}
-<p>Host no encontrado.</p>
+<div class="empty-state">
+  <h3>Host no encontrado</h3>
+</div>
 {% endif %}
 {% endblock %}

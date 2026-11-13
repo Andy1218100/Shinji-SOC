@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Iniciar sesion · Prox Secure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="brand">
+        {% from "_icons.html" import icon %}
+        {{ icon("shield") }}
+        <span>Prox Secure</span>
+      </div>
+      <form id="login-form" novalidate>
+        <label for="admin-key">Clave de administrador</label>
+        <input type="password" id="admin-key" name="admin-key" placeholder="ADMIN_API_KEY" autocomplete="current-password" autofocus />
+        <p class="login-error" id="login-error"></p>
+        <button type="submit" class="primary">
+          {{ icon("lock", "icon") }}
+          <span>Entrar</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+  <script>
+    const form = document.getElementById("login-form");
+    const input = document.getElementById("admin-key");
+    const errorEl = document.getElementById("login-error");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const key = input.value.trim();
+      errorEl.textContent = "";
+
+      if (!key) {
+        errorEl.textContent = "Ingresa la clave de administrador.";
+        return;
+      }
+
+      const submitBtn = form.querySelector("button[type=submit]");
+      const submitLabel = submitBtn.querySelector("span");
+      submitBtn.disabled = true;
+      submitLabel.textContent = "Entrando...";
+
+      try {
+        const res = await fetch("/api/v1/auth/check", { headers: { "X-Admin-Key": key } });
+        if (res.ok) {
+          setAdminKey(key);
+          const params = new URLSearchParams(window.location.search);
+          window.location.href = params.get("next") || "/";
+          return;
+        } else {
+          errorEl.textContent = "Clave incorrecta. Revisa ADMIN_API_KEY en tu .env.";
+        }
+      } catch (e) {
+        errorEl.textContent = "No se pudo contactar al servidor.";
+      } finally {
+        submitBtn.disabled = false;
+        submitLabel.textContent = "Entrar";
+      }
+    });
+  </script>
+</body>
+</html>

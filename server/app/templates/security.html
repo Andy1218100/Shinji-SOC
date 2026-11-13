@@ -1,157 +1,172 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Seguridad · Prox Secure{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
-<section>
-  <h2>Clave de administrador</h2>
-  <p style="color:#9aa0b4; font-size:0.85rem;">
-    Necesaria para aprobar, descartar o desbloquear. Se guarda solo en este navegador (localStorage).
-  </p>
-  <input type="password" id="admin-key-input" placeholder="ADMIN_API_KEY" style="width: 320px;" />
-  <button onclick="saveAdminKey()">Guardar</button>
-  <span id="admin-key-status" style="margin-left: 0.5rem; color:#9aa0b4; font-size:0.85rem;"></span>
-</section>
+<div class="page-header">
+  <h1>Seguridad</h1>
+  <p>Eventos detectados, origenes de ataque y bloqueos activos.</p>
+</div>
 
-<section>
+<section class="panel">
   <h2>Mapa de origenes de ataque</h2>
-  <div id="map" style="height: 380px; border-radius: 0.5rem;"></div>
-  <p style="color:#9aa0b4; font-size:0.85rem;">
+  <div id="map" style="height: 360px;"></div>
+  <p style="font-size: var(--text-xs); margin-top: var(--space-2);">
     Sin base GeoIP configurada (MaxMind), los eventos aparecen en la lista pero sin punto en el mapa.
   </p>
 </section>
 
-<section>
+<section class="panel">
   <h2>Eventos de seguridad</h2>
-  <table>
-    <thead>
-      <tr><th>Cuando</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle / IA</th><th>Estado</th><th></th></tr>
-    </thead>
-    <tbody id="events-body">
-      <tr><td colspan="7">Cargando...</td></tr>
-    </tbody>
-  </table>
+  <div id="events-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
 </section>
 
-<section>
+<section class="panel">
   <h2>IPs bloqueadas</h2>
-  <table>
-    <thead><tr><th>IP</th><th>Host</th><th>Desde</th><th>Motivo</th><th></th></tr></thead>
-    <tbody id="blocked-body">
-      <tr><td colspan="5">Cargando...</td></tr>
-    </tbody>
-  </table>
+  <div id="blocked-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
 </section>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-function adminKey() {
-  return localStorage.getItem('proxsecure_admin_key') || '';
-}
-
-function saveAdminKey() {
-  const value = document.getElementById('admin-key-input').value.trim();
-  if (value) {
-    localStorage.setItem('proxsecure_admin_key', value);
-    updateAdminKeyStatus();
-  }
-}
-
-function updateAdminKeyStatus() {
-  const status = document.getElementById('admin-key-status');
-  status.textContent = adminKey() ? 'Clave guardada en este navegador.' : 'Sin clave guardada todavia.';
-}
-updateAdminKeyStatus();
-
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 
 const map = L.map('map').setView([20, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap',
   maxZoom: 18,
+  className: 'map-tiles-dark',
 }).addTo(map);
+map._proxLayers = [];
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 async function loadEvents() {
-  const res = await fetch('/api/v1/security-events');
-  const events = await res.json();
-
-  const tbody = document.getElementById('events-body');
-  tbody.innerHTML = '';
-  for (const layer of (map._proxLayers || [])) map.removeLayer(layer);
-  map._proxLayers = [];
-
-  if (events.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7">Sin eventos todavia.</td></tr>';
+  const wrap = document.getElementById('events-wrap');
+  let events;
+  try {
+    const res = await fetch('/api/v1/security-events');
+    if (!res.ok) throw new Error(String(res.status));
+    events = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar los eventos. Revisa que el servidor este corriendo.</p></div>`;
     return;
   }
 
-  for (const ev of events) {
-    const tr = document.createElement('tr');
-    const badge = `<span class="badge ${severityClass[ev.severity] || 'warn'}">${ev.severity}</span>`;
+  for (const layer of map._proxLayers) map.removeLayer(layer);
+  map._proxLayers = [];
+
+  if (events.length === 0) {
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <p>Sin eventos de seguridad todavia.</p>
+      </div>`;
+    return;
+  }
+
+  const rows = events.map(ev => {
+    const sev = severityClass[ev.severity] || 'warn';
+    const geo = ev.geo_country ? ` (${ev.geo_city || ''} ${ev.geo_country})` : '';
     const canAct = ev.status === 'open' && ev.suggested_action;
-    tr.innerHTML = `
-      <td>${new Date(ev.created_at).toLocaleString()}</td>
-      <td>${ev.kind}</td>
-      <td>${badge}</td>
-      <td>${ev.source_ip || '-'} ${ev.geo_country ? `(${ev.geo_city || ''} ${ev.geo_country})` : ''}</td>
-      <td>${ev.ai_summary || '(sin resumen de IA todavia)'}</td>
-      <td>${ev.status}</td>
-      <td>${canAct ? `
-        <button onclick="approve('${ev.id}')">Aprobar ${ev.suggested_action}</button>
-        <button onclick="dismiss('${ev.id}')">Descartar</button>
-      ` : ''}</td>
-    `;
-    tbody.appendChild(tr);
+    const actions = canAct ? `
+      <div class="row-actions">
+        <button class="sm primary" data-approve="${ev.id}">Aprobar ${ev.suggested_action}</button>
+        <button class="sm ghost" data-dismiss="${ev.id}">Descartar</button>
+      </div>` : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${ev.status}</span>`;
 
     if (ev.geo_lat && ev.geo_lon) {
       const marker = L.circleMarker([ev.geo_lat, ev.geo_lon], {
         radius: 7,
-        color: ev.severity === 'critical' ? '#e2555f' : '#e0a34e',
+        color: sev === 'crit' ? '#e5595c' : '#e0a030',
+        fillOpacity: 0.6,
       }).bindPopup(`${ev.source_ip}<br>${ev.kind}`).addTo(map);
       map._proxLayers.push(marker);
     }
-  }
+
+    return `
+      <tr>
+        <td>${formatDate(ev.created_at)}</td>
+        <td>${ev.kind}</td>
+        <td><span class="badge ${sev}">${ev.severity}</span></td>
+        <td>${ev.source_ip || '-'}${geo}</td>
+        <td>${ev.ai_summary || '<span style="color:var(--text-muted)">pendiente</span>'}</td>
+        <td>${actions}</td>
+      </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <table class="data events-table">
+      <colgroup>
+        <col style="width:9%"><col style="width:11%"><col style="width:9%">
+        <col style="width:14%"><col style="width:44%"><col style="width:13%">
+      </colgroup>
+      <thead><tr><th>Cuando</th><th>Tipo</th><th>Severidad</th><th>Origen</th><th>Detalle / IA</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  wrap.querySelectorAll('[data-approve]').forEach(btn => {
+    btn.addEventListener('click', () => approve(btn.dataset.approve));
+  });
+  wrap.querySelectorAll('[data-dismiss]').forEach(btn => {
+    btn.addEventListener('click', () => dismiss(btn.dataset.dismiss));
+  });
 }
 
 async function loadBlocked() {
-  const res = await fetch('/api/v1/blocked-ips');
-  const rows = await res.json();
-  const tbody = document.getElementById('blocked-body');
-  tbody.innerHTML = rows.length ? '' : '<tr><td colspan="5">Sin IPs bloqueadas.</td></tr>';
-  for (const b of rows) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${b.ip}</td>
-      <td>${b.host_id}</td>
-      <td>${new Date(b.blocked_at).toLocaleString()}</td>
-      <td>${b.reason || '-'}</td>
-      <td><button onclick="unblock('${b.id}')">Desbloquear</button></td>
-    `;
-    tbody.appendChild(tr);
+  const wrap = document.getElementById('blocked-wrap');
+  let rows;
+  try {
+    const res = await fetch('/api/v1/blocked-ips');
+    if (!res.ok) throw new Error(String(res.status));
+    rows = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar las IPs bloqueadas.</p></div>`;
+    return;
   }
-}
 
-async function adminAction(url) {
-  if (!adminKey()) {
-    alert('Primero guarda la ADMIN_API_KEY arriba.');
-    return false;
+  if (rows.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><p>Sin IPs bloqueadas.</p></div>`;
+    return;
   }
-  const res = await fetch(url, { method: 'POST', headers: { 'X-Admin-Key': adminKey() } });
-  if (!res.ok) {
-    alert(`La accion fallo (HTTP ${res.status}). Revisa que la clave sea correcta.`);
-    return false;
-  }
-  return true;
+
+  const body = rows.map(b => `
+    <tr>
+      <td>${b.ip}</td>
+      <td>${formatDate(b.blocked_at)}</td>
+      <td>${b.reason || '-'}</td>
+      <td><button class="sm ghost" data-unblock="${b.id}">Desbloquear</button></td>
+    </tr>`).join('');
+
+  wrap.innerHTML = `
+    <table class="data">
+      <thead><tr><th>IP</th><th>Desde</th><th>Motivo</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+
+  wrap.querySelectorAll('[data-unblock]').forEach(btn => {
+    btn.addEventListener('click', () => unblock(btn.dataset.unblock));
+  });
 }
 
 async function approve(id) {
-  if (await adminAction(`/api/v1/security-events/${id}/approve`)) loadEvents();
+  const res = await adminAction(`/api/v1/security-events/${id}/approve`);
+  if (res) { toast('Accion aprobada y encolada para el agente.', 'success'); loadEvents(); }
 }
 async function dismiss(id) {
-  if (await adminAction(`/api/v1/security-events/${id}/dismiss`)) loadEvents();
+  const res = await adminAction(`/api/v1/security-events/${id}/dismiss`);
+  if (res) { toast('Evento descartado.', 'success'); loadEvents(); }
 }
 async function unblock(id) {
-  if (await adminAction(`/api/v1/blocked-ips/${id}/unblock`)) loadBlocked();
+  const res = await adminAction(`/api/v1/blocked-ips/${id}/unblock`);
+  if (res) { toast('Desbloqueo encolado.', 'success'); loadBlocked(); }
 }
 
 loadEvents();
