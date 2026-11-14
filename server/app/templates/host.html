@@ -18,18 +18,44 @@
   <h2>Metricas del sistema</h2>
 
   <div class="stat-grid" id="live-stats">
-    <div class="stat-tile"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">-</div></div>
-    <div class="stat-tile"><div class="stat-label">RAM</div><div class="stat-value" id="stat-mem">-</div></div>
-    <div class="stat-tile"><div class="stat-label">Swap</div><div class="stat-value" id="stat-swap">-</div></div>
-    <div class="stat-tile"><div class="stat-label">Load avg (1m)</div><div class="stat-value" id="stat-load">-</div></div>
-    <div class="stat-tile"><div class="stat-label">↓ Download</div><div class="stat-value" id="stat-down">-</div></div>
-    <div class="stat-tile"><div class="stat-label">↑ Upload</div><div class="stat-value" id="stat-up">-</div></div>
+    <div class="stat-tile">
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-cpu"></div></div>
+      <div class="stat-label"><span class="stat-dot" id="dot-cpu"></span>CPU</div>
+      <div class="stat-value" id="stat-cpu">-</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-mem"></div></div>
+      <div class="stat-label"><span class="stat-dot" id="dot-mem"></span>RAM</div>
+      <div class="stat-value" id="stat-mem">-</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-swap"></div></div>
+      <div class="stat-label"><span class="stat-dot" id="dot-swap"></span>Swap</div>
+      <div class="stat-value" id="stat-swap">-</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-bar"><div class="stat-bar-fill" id="bar-load"></div></div>
+      <div class="stat-label"><span class="stat-dot" id="dot-load"></span>Load avg (1m)</div>
+      <div class="stat-value" id="stat-load">-</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-bar"></div>
+      <div class="stat-label">↓ Download</div>
+      <div class="stat-value" id="stat-down">-</div>
+    </div>
+    <div class="stat-tile">
+      <div class="stat-bar"></div>
+      <div class="stat-label">↑ Upload</div>
+      <div class="stat-value" id="stat-up">-</div>
+    </div>
   </div>
 
   <div class="range-tabs" id="range-tabs">
-    {% for r in ["1m","5m","15m","30m","1h","3h","6h","12h","24h","3d","7d","30d"] %}
-    <button type="button" class="range-tab{% if r == '1h' %} active{% endif %}" data-range="{{ r }}">{{ r }}</button>
-    {% endfor %}
+    <div class="range-tab-group">
+      {% for r in ["1m","5m","15m","30m","1h","3h","6h","12h","24h","3d","7d","30d"] %}
+      <button type="button" class="range-tab{% if r == '1h' %} active{% endif %}" data-range="{{ r }}">{{ r }}</button>
+      {% endfor %}
+    </div>
     <span class="range-meta" id="range-meta"></span>
   </div>
 
@@ -82,7 +108,7 @@ function baseOptions(extra) {
   return Object.assign({
     animation: false,
     interaction: { mode: 'index', intersect: false },
-    plugins: { legend: { labels: { color: color('--text-secondary'), boxWidth: 12, font: { size: 11 } } } },
+    plugins: { legend: { position: 'top', align: 'end', labels: { color: color('--text-secondary'), usePointStyle: true, pointStyle: 'circle', boxWidth: 7, boxHeight: 7, font: { size: 11 } } } },
     scales: baseScales(),
   }, extra || {});
 }
@@ -96,6 +122,18 @@ function fmtKbps(kbps) {
   return kbps >= 1000 ? `${(kbps / 1000).toFixed(2)} Mbps` : `${Math.round(kbps)} Kbps`;
 }
 
+function setBar(key, percent) {
+  const fill = document.getElementById(`bar-${key}`);
+  const dot = document.getElementById(`dot-${key}`);
+  if (!fill) return;
+  const pct = percent == null ? 0 : Math.max(0, Math.min(100, percent));
+  const level = pct >= 90 ? 'crit' : pct >= 75 ? 'warn' : '';
+  fill.style.width = `${pct}%`;
+  fill.className = `stat-bar-fill ${level}`;
+  if (dot) dot.className = `stat-dot ${level}`;
+}
+
+let coreCount = null;
 let cpuChart, loadChart, memChart, swapChart;
 
 function buildCharts() {
@@ -189,6 +227,11 @@ async function loadMetrics(range) {
     document.getElementById('stat-load').textContent = last.load1 != null ? last.load1.toFixed(2) : '-';
     document.getElementById('stat-down').textContent = fmtKbps(last.net_rx_kbps);
     document.getElementById('stat-up').textContent = fmtKbps(last.net_tx_kbps);
+
+    setBar('cpu', last.cpu_percent);
+    setBar('mem', last.mem_percent);
+    setBar('swap', last.swap_percent);
+    setBar('load', coreCount && last.load1 != null ? (last.load1 / coreCount) * 100 : null);
     document.getElementById('cpu-chart-sub').textContent =
       `usr:${(last.cpu_user_percent ?? 0).toFixed(1)}% sys:${(last.cpu_system_percent ?? 0).toFixed(1)}% io:${(last.cpu_iowait_percent ?? 0).toFixed(1)}%`;
     document.getElementById('mem-chart-sub').textContent = last.mem_used_mb != null ? `${fmtMB(last.mem_used_mb)} / ${fmtMB(last.mem_total_mb)}` : '';
@@ -248,7 +291,10 @@ async function loadSystemReport() {
 
   const r = data.raw || {};
   const ports = (r.listening_ports || []).map(p => p.process ? `${p.port} (${p.process})` : `${p.port}`);
-  if (r.cpu_count) document.getElementById('cpu-cores').textContent = `· ${r.cpu_count} cores`;
+  if (r.cpu_count) {
+    document.getElementById('cpu-cores').textContent = `· ${r.cpu_count} cores`;
+    coreCount = r.cpu_count;
+  }
 
   wrap.innerHTML = `
     <div class="report-fact-grid">

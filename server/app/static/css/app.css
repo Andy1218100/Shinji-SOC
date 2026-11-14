@@ -346,17 +346,45 @@ table.data tbody tr:hover {
   margin-bottom: var(--space-4);
 }
 .stat-tile {
+  position: relative;
   background: var(--surface-2);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
+  overflow: hidden;
 }
+.stat-tile .stat-bar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--border);
+}
+.stat-tile .stat-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 0.4s ease, background-color 0.4s ease;
+}
+.stat-tile .stat-bar-fill.warn { background: var(--warn); }
+.stat-tile .stat-bar-fill.crit { background: var(--crit); }
 .stat-tile .stat-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: var(--text-xs);
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 2px;
 }
+.stat-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex-shrink: 0;
+}
+.stat-dot.warn { background: var(--warn); }
+.stat-dot.crit { background: var(--crit); }
 .stat-tile .stat-value {
   font-size: var(--text-xl);
   font-weight: 600;
@@ -368,23 +396,39 @@ table.data tbody tr:hover {
 /* Selector de rango de tiempo (host.html) */
 .range-tabs {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex-wrap: wrap;
   align-items: center;
   margin-bottom: var(--space-4);
 }
-.range-tab {
+.range-tab-group {
+  display: flex;
+  gap: 2px;
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+.range-tab {
+  background: transparent;
+  border: none;
   color: var(--text-secondary);
   font-size: var(--text-xs);
-  padding: 4px 10px;
+  font-weight: 500;
+  padding: 5px 11px;
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.range-tab:hover { border-color: var(--border-strong); }
-.range-tab.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
-.range-meta { margin-left: auto; font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+.range-tab:hover { color: var(--text-primary); }
+.range-tab.active { background: var(--accent); color: var(--surface-1, #0b0e14); }
+.range-meta {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  padding: 7px 12px;
+}
 
 .chart-grid {
   display: grid;

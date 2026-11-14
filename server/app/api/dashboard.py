@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
@@ -13,6 +15,16 @@ from app.services import geoip
 
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
+
+# El navegador cachea agresivamente /static/css/app.css (sin esto, un
+# cambio de CSS no se ve hasta un hard-refresh manual). Se usa la fecha
+# de modificacion del archivo como version: cambia sola en cada deploy,
+# sin tocar nada a mano.
+try:
+    _css_version = int(os.path.getmtime(os.path.join("app", "static", "css", "app.css")))
+except OSError:
+    _css_version = 0
+templates.env.globals["css_version"] = _css_version
 
 
 def host_status(metric: Metric | None) -> str:
