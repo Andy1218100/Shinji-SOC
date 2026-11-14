@@ -22,6 +22,7 @@
   <div id="map" style="height: 360px;"></div>
   <p style="font-size: var(--text-xs); margin-top: var(--space-2);">
     Sin base GeoIP configurada (MaxMind), los eventos aparecen en la lista pero sin punto en el mapa.
+    Los arcos hacia un host necesitan que ese host tenga una IP publica geolocalizable.
   </p>
   <h3 style="margin-top: var(--space-4);">Origenes mas activos</h3>
   <div id="origins-list" class="origins-list"></div>
@@ -43,6 +44,7 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet-ant-path@1.3.0/dist/leaflet-ant-path.js"></script>
 <script>
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 
@@ -61,6 +63,48 @@ const clusterGroup = L.markerClusterGroup({
   }),
 });
 map.addLayer(clusterGroup);
+
+const arcGroup = L.layerGroup().addTo(map);
+const hostMarkerGroup = L.layerGroup().addTo(map);
+let hostGeoById = {};
+
+async function loadHostMarkers() {
+  try {
+    const res = await fetch('/api/v1/hosts');
+    if (!res.ok) throw new Error(String(res.status));
+    const hosts = await res.json();
+    hostGeoById = {};
+    hostMarkerGroup.clearLayers();
+    for (const h of hosts) {
+      if (h.geo_lat == null || h.geo_lon == null) continue;
+      hostGeoById[h.id] = { lat: h.geo_lat, lon: h.geo_lon, name: h.name };
+      L.circleMarker([h.geo_lat, h.geo_lon], {
+        radius: 8,
+        color: '#4f8cff',
+        weight: 2,
+        fillColor: '#0b1220',
+        fillOpacity: 1,
+      }).bindPopup(`${h.name} (tu host)`).addTo(hostMarkerGroup);
+    }
+  } catch (e) { /* sin hosts geolocalizables todavia */ }
+}
+
+function updateArcs(events) {
+  arcGroup.clearLayers();
+  for (const ev of events) {
+    const dest = hostGeoById[ev.host_id];
+    if (!(ev.geo_lat && ev.geo_lon && dest)) continue;
+    const color = ev.severity === 'critical' ? '#e5595c' : '#e0a030';
+    L.polyline.antPath([[ev.geo_lat, ev.geo_lon], [dest.lat, dest.lon]], {
+      color,
+      pulseColor: '#ffffff',
+      delay: 900,
+      dashArray: [8, 18],
+      weight: 2,
+      opacity: 0.55,
+    }).addTo(arcGroup);
+  }
+}
 
 function formatDate(iso) {
   const d = new Date(iso);
@@ -121,6 +165,7 @@ async function loadEvents() {
 
   updateStats(events);
   updateOrigins(events);
+  updateArcs(events);
   clusterGroup.clearLayers();
 
   if (events.length === 0) {
@@ -228,9 +273,17 @@ async function unblock(id) {
   if (res) { toast('Desbloqueo encolado.', 'success'); loadBlocked(); }
 }
 
-loadEvents();
-loadBlocked();
-setInterval(loadEvents, 15000);
+async function init() {
+  await loadHostMarkers();
+  await loadEvents();
+  loadBlocked();
+}
+init();
+
 setInterval(loadBlocked, 15000);
+setInterval(loadEvents, 60000); // red de seguridad si el stream SSE se corta
+
+const eventStream = new EventSource('/api/v1/security-events/stream');
+eventStream.onmessage = () => loadEvents();
 </script>
 {% endblock %}

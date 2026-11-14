@@ -37,7 +37,12 @@ async function adminAction(url, method = "POST") {
     return null;
   }
   if (!res.ok) {
-    toast(`La accion fallo (HTTP ${res.status}).`, "error");
+    let detail = `HTTP ${res.status}`;
+    try {
+      const data = await res.clone().json();
+      if (data && data.detail) detail = data.detail;
+    } catch (e) { /* cuerpo no era JSON */ }
+    toast(`La accion fallo: ${detail}`, "error");
     return null;
   }
   return res;

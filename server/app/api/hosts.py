@@ -8,8 +8,18 @@ from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.host import Host
 from app.schemas.host import HostCreate, HostCreated, HostOut
+from app.services import geoip
 
 router = APIRouter(prefix="/api/v1/hosts", tags=["hosts"])
+
+
+def _host_out_with_geo(host: Host) -> HostOut:
+    out = HostOut.model_validate(host)
+    if host.ip_address:
+        geo = geoip.lookup(host.ip_address)
+        out.geo_lat = geo.lat
+        out.geo_lon = geo.lon
+    return out
 
 
 @router.post("", response_model=HostCreated, dependencies=[Depends(require_admin)])
@@ -38,7 +48,7 @@ async def create_host(payload: HostCreate, db: AsyncSession = Depends(get_db)):
 @router.get("", response_model=list[HostOut], dependencies=[Depends(get_current_user)])
 async def list_hosts(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Host).order_by(Host.name))
-    return [HostOut.model_validate(h) for h in result.scalars().all()]
+    return [_host_out_with_geo(h) for h in result.scalars().all()]
 
 
 @router.get("/{host_id}", response_model=HostOut, dependencies=[Depends(get_current_user)])
@@ -47,4 +57,4 @@ async def get_host(host_id: str, db: AsyncSession = Depends(get_db)):
     host = result.scalar_one_or_none()
     if host is None:
         raise HTTPException(status_code=404, detail="Host no encontrado")
-    return HostOut.model_validate(host)
+    return _host_out_with_geo(host)

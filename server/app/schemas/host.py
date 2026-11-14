@@ -19,6 +19,8 @@ class HostOut(BaseModel):
     ip_address: str | None
     os: str | None
     last_seen: datetime | None
+    geo_lat: float | None = None
+    geo_lon: float | None = None
 
     class Config:
         from_attributes = True

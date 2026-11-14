@@ -84,6 +84,32 @@ async def reactivate_user(
     return {"status": "ok"}
 
 
+@router.delete("/{user_id}")
+async def delete_user(
+    user_id: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    if user_id == str(admin.id):
+        raise HTTPException(status_code=400, detail="No podes eliminar tu propia cuenta")
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    created_others = (
+        await db.execute(select(User.id).where(User.created_by == user.id).limit(1))
+    ).scalar_one_or_none()
+    if created_others:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta cuenta creo otras cuentas y no se puede eliminar; desactivala en su lugar",
+        )
+
+    await db.delete(user)
+    await db.commit()
+    return {"status": "ok"}
+
+
 @router.post("/{user_id}/reset-password", response_model=UserCreated)
 async def reset_password(
     user_id: str,

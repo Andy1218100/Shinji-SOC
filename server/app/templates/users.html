@@ -109,6 +109,7 @@ async function loadUsers() {
           <div class="row-actions">
             ${toggleAction}
             <button class="sm ghost" data-reset="${u.id}">Resetear contrasena</button>
+            <button class="sm danger" data-delete="${u.id}" data-username="${u.username}">Eliminar</button>
           </div>
         </td>
       </tr>`;
@@ -133,6 +134,19 @@ async function loadUsers() {
   wrap.querySelectorAll("[data-reset]").forEach((btn) => {
     btn.addEventListener("click", () => resetPassword(btn.dataset.reset));
   });
+  wrap.querySelectorAll("[data-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteUser(btn.dataset.delete, btn.dataset.username));
+  });
+}
+
+async function deleteUser(id, username) {
+  const ok = window.confirm(`Eliminar la cuenta "${username}" de forma permanente? Esta accion no se puede deshacer.`);
+  if (!ok) return;
+  const res = await adminAction(`/api/v1/users/${id}`, "DELETE");
+  if (res) {
+    toast("Usuario eliminado.", "success");
+    loadUsers();
+  }
 }
 
 async function toggleActive(id, action) {

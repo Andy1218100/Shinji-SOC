@@ -131,6 +131,15 @@ http://localhost:8000/security (SOC) y http://localhost:8000/users
 docker compose restart server
 ```
 
+El mapa (`/security`) se actualiza solo en tiempo real via Server-Sent
+Events (sin polling): apenas el IDS crea un evento nuevo, el dashboard lo
+recibe al instante. Los origenes de ataque se dibujan como puntos
+agrupados (clusters); si el host atacado tambien tiene una IP publica
+geolocalizable (campo `ip_address` al registrarlo), se dibuja ademas un
+arco animado desde el origen hasta ese host. Sin GeoIP configurado, o con
+hosts en IP privada, los eventos siguen apareciendo en la lista, solo que
+sin punto ni arco en el mapa -- nunca se inventa una ubicacion.
+
 ## Acceso: usuarios, contrasenas y MFA
 
 No hay mas clave compartida: cada persona tiene su propia cuenta
@@ -142,6 +151,11 @@ gestiona usuarios) y `viewer` (ve todo, no puede actuar).
 (ver arriba). Es el unico momento donde hace falta tocar la terminal --
 todo lo demas se gestiona desde `/users` una vez que ese primer admin
 entro.
+
+Desde `/users`, un admin puede desactivar, reactivar, resetear la
+contrasena o **eliminar** una cuenta de forma permanente. No se puede
+eliminar la propia cuenta ni una cuenta que ya creo a otras (hay que
+desactivarla en ese caso, para no dejar el registro `created_by` roto).
 
 **Crear mas cuentas**: un admin logueado va a `/users`, pone el nombre y
 el rol, y el sistema genera una contrasena temporal que se muestra **una

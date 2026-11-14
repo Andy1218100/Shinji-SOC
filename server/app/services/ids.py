@@ -16,6 +16,7 @@ from app.models.host import Host
 from app.models.security import IngestedRequest, SecurityEvent
 from app.schemas.logs import LogEntryIn
 from app.services import ai, geoip
+from app.services.event_bus import security_events_bus
 
 logger = logging.getLogger("ids")
 
@@ -68,6 +69,7 @@ async def create_event(
     session.add(event)
     await session.commit()
     await session.refresh(event)
+    security_events_bus.publish({"event_id": str(event.id)})
 
     prompt = (
         f"Se detecto un posible ataque tipo '{kind}' desde la IP {source_ip} contra "

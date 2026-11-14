@@ -1,6 +1,9 @@
+import asyncio
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,8 +11,31 @@ from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.security import BlockedIP, Command, SecurityEvent
 from app.schemas.security import BlockedIPOut, SecurityEventOut
+from app.services.event_bus import security_events_bus
 
 router = APIRouter(prefix="/api/v1", tags=["security"])
+
+SSE_KEEPALIVE_SECONDS = 15
+
+
+@router.get("/security-events/stream", dependencies=[Depends(get_current_user)])
+async def stream_security_events(request: Request):
+    queue = security_events_bus.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_SECONDS)
+                    yield f"data: {json.dumps(message)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+        finally:
+            security_events_bus.unsubscribe(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/security-events", response_model=list[SecurityEventOut], dependencies=[Depends(get_current_user)])
