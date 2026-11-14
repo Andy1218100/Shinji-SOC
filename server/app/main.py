@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import ai, alerts, auth, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
 from app.api.deps import Forbidden, NotAuthenticated
-from app.core.db import Base, engine
+from app.core.db import Base, engine, ensure_hypertables
 from app.services.alerting import run_forever as alerting_run_forever
 from app.services.vuln_scan import run_forever as vuln_scan_run_forever
 
@@ -21,6 +21,7 @@ async def _connect_with_retry(max_attempts: int = 10, delay_seconds: float = 2.0
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await ensure_hypertables(conn)
             return
         except Exception as exc:
             if attempt == max_attempts:

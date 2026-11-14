@@ -7,10 +7,58 @@
   <p>Estado de tus hosts en tiempo real.</p>
 </div>
 
-<section class="panel">
-  <h2>Hosts</h2>
+{% if user.role == 'admin' %}
+<section class="panel" id="new-host-panel" style="display:none; border: 1px solid var(--warn);">
+  <h2 style="color: var(--warn);">Host creado: instala el agente</h2>
+  <p>
+    El servidor y el agente se "comunican" por HTTP: el agente de <strong id="new-host-name"></strong>
+    manda metricas/logs/comandos a esta direccion usando la API key de abajo (header <code>X-API-Key</code>).
+    Corre esto en el servidor Linux real que queres monitorear (no aca):
+  </p>
+  <div style="display:flex; align-items:center; gap: var(--space-2); flex-wrap: wrap;">
+    <code id="new-host-cmd" style="font-size: var(--text-sm); background: var(--surface-2); padding: 8px 14px; border-radius: var(--radius-sm); flex: 1; min-width: 280px; word-break: break-all;"></code>
+    <button class="sm" id="copy-host-cmd-btn" type="button">{{ icon("copy", "icon") }} Copiar</button>
+  </div>
+  <p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">
+    Necesitas copiar antes la carpeta <code>agent/</code> a ese servidor (<code>scp -r agent usuario@servidor:/tmp/prox-secure-agent</code>).
+    El comando de arriba asume que ese servidor puede llegar a <strong>{{ request.url.scheme }}://{{ request.url.netloc }}</strong> --
+    si esta en otra red, cambia esa parte por una direccion que si pueda alcanzar (IP publica, VPN, etc.).
+    La API key no se vuelve a mostrar; si la perdes, hay que reinstalar con una nueva.
+  </p>
+  <button class="sm ghost" id="dismiss-host-cmd-btn" type="button" style="margin-top: var(--space-3);">Entendido, ocultar</button>
+</section>
+{% endif %}
+
+<section class="panel" id="hosts-panel">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-3);">
+    <h2 style="margin:0;">Hosts</h2>
+    {% if user.role == 'admin' %}
+    <button class="sm primary" id="show-new-host-form-btn" type="button">+ Nuevo host</button>
+    {% endif %}
+  </div>
+
+  {% if user.role == 'admin' %}
+  <form id="create-host-form" style="display:none; gap: var(--space-3); align-items:flex-end; flex-wrap: wrap; margin-bottom: var(--space-4);">
+    <div>
+      <label for="new-host-name-input" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Nombre</label>
+      <input type="text" id="new-host-name-input" placeholder="web-01" style="width: 180px;" />
+    </div>
+    <div>
+      <label for="new-host-hostname-input" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Hostname</label>
+      <input type="text" id="new-host-hostname-input" placeholder="web-01.midominio.com" style="width: 220px;" />
+    </div>
+    <div>
+      <label for="new-host-ip-input" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">IP publica (opcional)</label>
+      <input type="text" id="new-host-ip-input" placeholder="Para GeoIP/mapa de ataques" style="width: 200px;" />
+    </div>
+    <button type="submit" class="primary">Crear</button>
+    <button type="button" class="ghost" id="cancel-new-host-btn">Cancelar</button>
+  </form>
+  <p class="login-error" id="create-host-error"></p>
+  {% endif %}
+
   {% if hosts %}
-  <table class="data">
+  <table class="data" id="hosts-table">
     <thead>
       <tr><th>Host</th><th>CPU</th><th>Mem</th><th>Disco</th><th>Load1</th><th>Visto</th></tr>
     </thead>
@@ -35,14 +83,95 @@
     </tbody>
   </table>
   {% else %}
-  <div class="empty-state">
+  <div class="empty-state" id="hosts-empty-state">
     {{ icon("server", "icon") }}
     <h3>Todavia no hay hosts registrados</h3>
-    <p>Registra el primero con la API de administracion.</p>
-    <code>curl -X POST /api/v1/hosts -b cookies.txt -d '{"name":"web-01","hostname":"web-01"}'</code>
+    <p>Creá el primero con el botón "+ Nuevo host" de arriba.</p>
   </div>
   {% endif %}
 </section>
+
+{% if user.role == 'admin' %}
+<script>
+const showFormBtn = document.getElementById('show-new-host-form-btn');
+const form = document.getElementById('create-host-form');
+const serverOrigin = `{{ request.url.scheme }}://{{ request.url.netloc }}`;
+
+showFormBtn.addEventListener('click', () => { form.style.display = 'flex'; showFormBtn.style.display = 'none'; });
+document.getElementById('cancel-new-host-btn').addEventListener('click', () => { form.style.display = 'none'; showFormBtn.style.display = 'inline-flex'; });
+
+function showNewHostPanel(name, apiKey) {
+  document.getElementById('new-host-name').textContent = name;
+  document.getElementById('new-host-cmd').textContent =
+    `sudo ./install.sh ${serverOrigin} ${apiKey}`;
+  document.getElementById('new-host-panel').style.display = 'block';
+  document.getElementById('new-host-panel').scrollIntoView({ behavior: 'smooth' });
+}
+document.getElementById('copy-host-cmd-btn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(document.getElementById('new-host-cmd').textContent);
+    toast('Comando copiado.', 'success');
+  } catch (e) {
+    toast('No se pudo copiar automaticamente, selecciona el texto a mano.', 'error');
+  }
+});
+document.getElementById('dismiss-host-cmd-btn').addEventListener('click', () => {
+  document.getElementById('new-host-panel').style.display = 'none';
+});
+
+function addHostRow(host) {
+  const emptyState = document.getElementById('hosts-empty-state');
+  let table = document.getElementById('hosts-table');
+  if (!table) {
+    document.getElementById('hosts-panel').insertAdjacentHTML('beforeend', `
+      <table class="data" id="hosts-table">
+        <thead><tr><th>Host</th><th>CPU</th><th>Mem</th><th>Disco</th><th>Load1</th><th>Visto</th></tr></thead>
+        <tbody></tbody>
+      </table>`);
+    table = document.getElementById('hosts-table');
+  }
+  if (emptyState) emptyState.remove();
+  table.querySelector('tbody').insertAdjacentHTML('beforeend', `
+    <tr>
+      <td><a class="status idle" href="/hosts/${host.id}"><span class="dot idle"></span>${host.name}</a></td>
+      <td>-%</td><td>-%</td><td>-%</td><td>-</td><td>nunca</td>
+    </tr>`);
+}
+
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const name = document.getElementById('new-host-name-input').value.trim();
+  const hostname = document.getElementById('new-host-hostname-input').value.trim();
+  const ip_address = document.getElementById('new-host-ip-input').value.trim();
+  const errorEl = document.getElementById('create-host-error');
+  errorEl.textContent = '';
+
+  if (!name || !hostname) {
+    errorEl.textContent = 'Nombre y hostname son obligatorios.';
+    return;
+  }
+
+  const res = await fetch('/api/v1/hosts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, hostname, ip_address: ip_address || null }),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    errorEl.textContent = data.detail || 'No se pudo crear el host.';
+    return;
+  }
+
+  form.reset();
+  form.style.display = 'none';
+  showFormBtn.style.display = 'inline-flex';
+  addHostRow(data);
+  showNewHostPanel(data.name, data.api_key);
+  toast('Host creado.', 'success');
+});
+</script>
+{% endif %}
 
 <section class="panel">
   <h2>Alertas activas</h2>

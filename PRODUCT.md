@@ -59,8 +59,14 @@ executes admin-approved actions through narrowly scoped sudo rules
   watch for process anomalies — no more hand-editing `log_paths`/
   `service_users` identically for every machine. A manual override in the
   agent's `config.yaml` still wins if set, for non-standard setups.
-- Metrics: CPU/mem/disk/network/load per host, threshold-based alert rules,
-  AI-generated explanations for triggered alerts.
+- Metrics (detailed 2026-11-14): per host, not just totals — CPU broken
+  into user/system/iowait/steal, memory into used/buffers/cached/shared/
+  available, swap, network throughput (not just cumulative counters), disk
+  and load averages. A time-range picker (1m through 30d) backs a live
+  dashboard styled after Kula's; TimescaleDB (`time_bucket`) downsamples
+  longer ranges server-side so a 30-day chart isn't dragging raw rows.
+  Threshold-based alert rules and AI-generated explanations for triggered
+  alerts still work the same as before, on `cpu_percent`/etc.
 - Intrusion detection: path-scan and brute-force/flood detection, parsed
   only from nginx/apache "combined" access log format — other log formats
   are not parsed and those lines are silently skipped.

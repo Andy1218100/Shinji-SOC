@@ -193,6 +193,14 @@ curl -b cookies.txt http://localhost:8000/api/v1/hosts
 
 ## Registrar un host a monitorear
 
+Desde el dashboard: en `/` (Monitoreo), boton **"+ Nuevo host"** (solo
+admin). Al crearlo se muestra, una sola vez, el comando exacto para
+instalar el agente (con la URL del servidor y la API key ya completas) --
+ver la seccion siguiente para lo que hace falta hacer en el servidor
+real.
+
+O por API, si preferis scriptearlo:
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/hosts \
   -b cookies.txt \
@@ -201,7 +209,10 @@ curl -X POST http://localhost:8000/api/v1/hosts \
 ```
 
 La respuesta incluye `api_key`: es la que usa el agente de ese host para
-autenticarse al enviar metricas.
+autenticarse (header `X-API-Key`) al mandar metricas, logs, inventario e
+informe de sistema. No se vuelve a mostrar -- si se pierde, hay que
+reinstalar el agente con una key nueva (`reset` no existe para hosts,
+a diferencia de usuarios).
 
 ## Instalar el agente en un servidor Linux remoto
 

@@ -15,8 +15,42 @@
 </section>
 
 <section class="panel">
-  <h2>Metricas (ultima hora)</h2>
-  <canvas id="chart" height="90"></canvas>
+  <h2>Metricas del sistema</h2>
+
+  <div class="stat-grid" id="live-stats">
+    <div class="stat-tile"><div class="stat-label">CPU</div><div class="stat-value" id="stat-cpu">-</div></div>
+    <div class="stat-tile"><div class="stat-label">RAM</div><div class="stat-value" id="stat-mem">-</div></div>
+    <div class="stat-tile"><div class="stat-label">Swap</div><div class="stat-value" id="stat-swap">-</div></div>
+    <div class="stat-tile"><div class="stat-label">Load avg (1m)</div><div class="stat-value" id="stat-load">-</div></div>
+    <div class="stat-tile"><div class="stat-label">↓ Download</div><div class="stat-value" id="stat-down">-</div></div>
+    <div class="stat-tile"><div class="stat-label">↑ Upload</div><div class="stat-value" id="stat-up">-</div></div>
+  </div>
+
+  <div class="range-tabs" id="range-tabs">
+    {% for r in ["1m","5m","15m","30m","1h","3h","6h","12h","24h","3d","7d","30d"] %}
+    <button type="button" class="range-tab{% if r == '1h' %} active{% endif %}" data-range="{{ r }}">{{ r }}</button>
+    {% endfor %}
+    <span class="range-meta" id="range-meta"></span>
+  </div>
+
+  <div class="chart-grid">
+    <div class="chart-card">
+      <h3>CPU Usage <span class="chart-sub" id="cpu-chart-sub"></span><span class="chart-sub" id="cpu-cores"></span></h3>
+      <canvas id="cpu-chart" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Load Average</h3>
+      <canvas id="load-chart" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Memory Usage <span class="chart-sub" id="mem-chart-sub"></span></h3>
+      <canvas id="mem-chart" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>Swap Usage <span class="chart-sub" id="swap-chart-sub"></span></h3>
+      <canvas id="swap-chart" height="200"></canvas>
+    </div>
+  </div>
 </section>
 
 <section class="panel">
@@ -30,31 +64,153 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script>
-async function loadMetrics() {
-  const res = await fetch(`/api/v1/hosts/{{ host.id }}/metrics?minutes=60`);
-  const data = await res.json();
-  const labels = data.map(d => new Date(d.ts).toLocaleTimeString());
-  const css = getComputedStyle(document.documentElement);
-  new Chart(document.getElementById('chart'), {
+const RANGE_SECONDS = {
+  "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+  "1h": 3600, "3h": 10800, "6h": 21600, "12h": 43200,
+  "24h": 86400, "3d": 259200, "7d": 604800, "30d": 2592000,
+};
+const css = getComputedStyle(document.documentElement);
+const color = (name) => css.getPropertyValue(name).trim();
+
+function baseScales() {
+  return {
+    x: { ticks: { color: color('--text-muted'), maxTicksLimit: 8 }, grid: { color: color('--border') } },
+    y: { ticks: { color: color('--text-muted') }, grid: { color: color('--border') }, beginAtZero: true },
+  };
+}
+function baseOptions(extra) {
+  return Object.assign({
+    animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { labels: { color: color('--text-secondary'), boxWidth: 12, font: { size: 11 } } } },
+    scales: baseScales(),
+  }, extra || {});
+}
+
+function fmtMB(mb) {
+  if (mb == null) return '-';
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+function fmtKbps(kbps) {
+  if (kbps == null) return '-';
+  return kbps >= 1000 ? `${(kbps / 1000).toFixed(2)} Mbps` : `${Math.round(kbps)} Kbps`;
+}
+
+let cpuChart, loadChart, memChart, swapChart;
+
+function buildCharts() {
+  cpuChart = new Chart(document.getElementById('cpu-chart'), {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        { label: 'CPU %', data: data.map(d => d.cpu_percent), borderColor: css.getPropertyValue('--accent'), tension: 0.3 },
-        { label: 'Mem %', data: data.map(d => d.mem_percent), borderColor: css.getPropertyValue('--warn'), tension: 0.3 },
-        { label: 'Disco %', data: data.map(d => d.disk_percent), borderColor: css.getPropertyValue('--ok'), tension: 0.3 },
-      ],
-    },
-    options: {
-      plugins: { legend: { labels: { color: css.getPropertyValue('--text-secondary') } } },
-      scales: {
-        x: { ticks: { color: css.getPropertyValue('--text-muted') }, grid: { color: css.getPropertyValue('--border') } },
-        y: { ticks: { color: css.getPropertyValue('--text-muted') }, grid: { color: css.getPropertyValue('--border') } },
-      },
-    },
+    data: { labels: [], datasets: [
+      { label: 'User', data: [], borderColor: color('--accent'), backgroundColor: color('--accent') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'System', data: [], borderColor: color('--warn'), backgroundColor: color('--warn') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'IOWait', data: [], borderColor: color('--crit'), backgroundColor: color('--crit') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Steal', data: [], borderColor: color('--text-muted'), backgroundColor: color('--text-muted') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Total', data: [], borderColor: color('--ok'), fill: false, pointRadius: 0, borderWidth: 2, tension: 0.2 },
+    ] },
+    options: baseOptions({ scales: Object.assign(baseScales(), { y: { max: 100, beginAtZero: true, ticks: { color: color('--text-muted'), callback: (v) => v + '%' }, grid: { color: color('--border') } } }) }),
+  });
+
+  loadChart = new Chart(document.getElementById('load-chart'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: '1 min', data: [], borderColor: color('--crit'), fill: false, pointRadius: 0, borderWidth: 2, tension: 0.2 },
+      { label: '5 min', data: [], borderColor: color('--warn'), fill: false, pointRadius: 0, borderWidth: 2, tension: 0.2 },
+      { label: '15 min', data: [], borderColor: color('--ok'), fill: false, pointRadius: 0, borderWidth: 2, tension: 0.2 },
+    ] },
+    options: baseOptions(),
+  });
+
+  memChart = new Chart(document.getElementById('mem-chart'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Used', data: [], borderColor: color('--accent'), backgroundColor: color('--accent') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Buffers', data: [], borderColor: color('--warn'), fill: false, borderDash: [4, 3], pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Cached', data: [], borderColor: color('--ok'), fill: false, borderDash: [4, 3], pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Shmem', data: [], borderColor: color('--crit'), fill: false, borderDash: [4, 3], pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Available', data: [], borderColor: color('--text-secondary'), fill: false, borderDash: [2, 2], pointRadius: 0, borderWidth: 1, tension: 0.2 },
+    ] },
+    options: baseOptions({ scales: Object.assign(baseScales(), { y: { beginAtZero: true, ticks: { color: color('--text-muted'), callback: fmtMB }, grid: { color: color('--border') } } }) }),
+  });
+
+  swapChart = new Chart(document.getElementById('swap-chart'), {
+    type: 'line',
+    data: { labels: [], datasets: [
+      { label: 'Used', data: [], borderColor: color('--warn'), backgroundColor: color('--warn') + '33', fill: true, pointRadius: 0, borderWidth: 1, tension: 0.2 },
+      { label: 'Free', data: [], borderColor: color('--ok'), fill: false, borderDash: [4, 3], pointRadius: 0, borderWidth: 1, tension: 0.2 },
+    ] },
+    options: baseOptions({ scales: Object.assign(baseScales(), { y: { beginAtZero: true, ticks: { color: color('--text-muted'), callback: fmtMB }, grid: { color: color('--border') } } }) }),
   });
 }
-loadMetrics();
+
+function updateChart(chart, labels, seriesArrays) {
+  chart.data.labels = labels;
+  chart.data.datasets.forEach((ds, i) => { ds.data = seriesArrays[i]; });
+  chart.update();
+}
+
+let currentRange = '1h';
+
+async function loadMetrics(range) {
+  currentRange = range;
+  const res = await fetch(`/api/v1/hosts/{{ host.id }}/metrics?range=${range}`);
+  const data = await res.json();
+
+  const rangeSeconds = RANGE_SECONDS[range] || 3600;
+  const fmt = rangeSeconds > 86400
+    ? (d) => d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const labels = data.map(d => fmt(new Date(d.ts)));
+
+  updateChart(cpuChart, labels, [
+    data.map(d => d.cpu_user_percent),
+    data.map(d => d.cpu_system_percent),
+    data.map(d => d.cpu_iowait_percent),
+    data.map(d => d.cpu_steal_percent),
+    data.map(d => d.cpu_percent),
+  ]);
+  updateChart(loadChart, labels, [
+    data.map(d => d.load1), data.map(d => d.load5), data.map(d => d.load15),
+  ]);
+  updateChart(memChart, labels, [
+    data.map(d => d.mem_used_mb), data.map(d => d.mem_buffers_mb), data.map(d => d.mem_cached_mb),
+    data.map(d => d.mem_shared_mb), data.map(d => d.mem_available_mb),
+  ]);
+  updateChart(swapChart, labels, [
+    data.map(d => d.swap_used_mb),
+    data.map(d => d.swap_total_mb != null && d.swap_used_mb != null ? Math.max(0, d.swap_total_mb - d.swap_used_mb) : null),
+  ]);
+
+  const last = data[data.length - 1];
+  if (last) {
+    document.getElementById('stat-cpu').textContent = last.cpu_percent != null ? `${last.cpu_percent.toFixed(1)}%` : '-';
+    document.getElementById('stat-mem').textContent = last.mem_percent != null ? `${last.mem_percent.toFixed(1)}%` : '-';
+    document.getElementById('stat-swap').textContent = last.swap_percent != null ? `${last.swap_percent.toFixed(1)}%` : '-';
+    document.getElementById('stat-load').textContent = last.load1 != null ? last.load1.toFixed(2) : '-';
+    document.getElementById('stat-down').textContent = fmtKbps(last.net_rx_kbps);
+    document.getElementById('stat-up').textContent = fmtKbps(last.net_tx_kbps);
+    document.getElementById('cpu-chart-sub').textContent =
+      `usr:${(last.cpu_user_percent ?? 0).toFixed(1)}% sys:${(last.cpu_system_percent ?? 0).toFixed(1)}% io:${(last.cpu_iowait_percent ?? 0).toFixed(1)}%`;
+    document.getElementById('mem-chart-sub').textContent = last.mem_used_mb != null ? `${fmtMB(last.mem_used_mb)} / ${fmtMB(last.mem_total_mb)}` : '';
+    document.getElementById('swap-chart-sub').textContent = last.swap_used_mb != null ? `${fmtMB(last.swap_used_mb)} / ${fmtMB(last.swap_total_mb)}` : '';
+  }
+
+  const bucketSeconds = Math.max(1, Math.floor(rangeSeconds / 250));
+  const sampleDesc = bucketSeconds <= 15 ? 'datos crudos' : `promediado cada ~${bucketSeconds}s`;
+  document.getElementById('range-meta').textContent = data.length ? `${data.length} puntos · ${sampleDesc}` : 'sin datos en este rango';
+}
+
+document.querySelectorAll('.range-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadMetrics(btn.dataset.range);
+  });
+});
+
+buildCharts();
+loadMetrics(currentRange);
+setInterval(() => loadMetrics(currentRange), 15000);
 
 function formatDate(iso) {
   if (!iso) return "-";
@@ -92,6 +248,7 @@ async function loadSystemReport() {
 
   const r = data.raw || {};
   const ports = (r.listening_ports || []).map(p => p.process ? `${p.port} (${p.process})` : `${p.port}`);
+  if (r.cpu_count) document.getElementById('cpu-cores').textContent = `· ${r.cpu_count} cores`;
 
   wrap.innerHTML = `
     <div class="report-fact-grid">
