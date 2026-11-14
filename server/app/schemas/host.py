@@ -28,3 +28,7 @@ class HostOut(BaseModel):
 
 class HostCreated(HostOut):
     api_key: str
+
+
+class HostDeleteRequest(BaseModel):
+    mfa_code: str

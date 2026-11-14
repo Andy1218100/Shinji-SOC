@@ -1,15 +1,20 @@
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
+from app.models.alert import Alert, AlertRule
 from app.models.host import Host
+from app.models.metric import Metric
+from app.models.security import BlockedIP, Command, IngestedRequest, SecurityEvent
 from app.models.system_report import SystemReport
-from app.schemas.host import HostCreate, HostCreated, HostOut
-from app.services import geoip
+from app.models.user import User
+from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
+from app.schemas.host import HostCreate, HostCreated, HostDeleteRequest, HostOut
+from app.services import auth, geoip
 
 router = APIRouter(prefix="/api/v1/hosts", tags=["hosts"])
 
@@ -59,6 +64,40 @@ async def get_host(host_id: str, db: AsyncSession = Depends(get_db)):
     if host is None:
         raise HTTPException(status_code=404, detail="Host no encontrado")
     return _host_out_with_geo(host)
+
+
+@router.delete("/{host_id}")
+async def delete_host(
+    host_id: str,
+    payload: HostDeleteRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Borrado permanente: ademas de admin, pide el codigo MFA del que lo
+    hace como paso extra (un host acumula historial real de metricas y
+    seguridad -- el borrado accidental no es recuperable)."""
+    host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host no encontrado")
+
+    if not auth.verify_totp(admin.mfa_secret, payload.mfa_code):
+        raise HTTPException(status_code=401, detail="Codigo MFA invalido")
+
+    # Orden que respeta las foreign keys: lo que depende de security_events
+    # primero, despues el resto de las tablas que dependen de hosts.
+    await db.execute(delete(Command).where(Command.host_id == host.id))
+    await db.execute(delete(SecurityEvent).where(SecurityEvent.host_id == host.id))
+    await db.execute(delete(BlockedIP).where(BlockedIP.host_id == host.id))
+    await db.execute(delete(IngestedRequest).where(IngestedRequest.host_id == host.id))
+    await db.execute(delete(InstalledPackage).where(InstalledPackage.host_id == host.id))
+    await db.execute(delete(VulnerabilityFinding).where(VulnerabilityFinding.host_id == host.id))
+    await db.execute(delete(SystemReport).where(SystemReport.host_id == host.id))
+    await db.execute(delete(Alert).where(Alert.host_id == host.id))
+    await db.execute(delete(AlertRule).where(AlertRule.host_id == host.id))
+    await db.execute(delete(Metric).where(Metric.host_id == host.id))
+    await db.delete(host)
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/{host_id}/system-report", dependencies=[Depends(get_current_user)])
