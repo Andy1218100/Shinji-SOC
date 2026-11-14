@@ -16,15 +16,19 @@ from app.services import geoip
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
 
-# El navegador cachea agresivamente /static/css/app.css (sin esto, un
-# cambio de CSS no se ve hasta un hard-refresh manual). Se usa la fecha
-# de modificacion del archivo como version: cambia sola en cada deploy,
-# sin tocar nada a mano.
-try:
-    _css_version = int(os.path.getmtime(os.path.join("app", "static", "css", "app.css")))
-except OSError:
-    _css_version = 0
-templates.env.globals["css_version"] = _css_version
+# El navegador cachea agresivamente los estaticos (sin esto, un cambio de
+# CSS o JS no se ve hasta un hard-refresh manual -- paso varias veces
+# durante el desarrollo). Se usa la fecha de modificacion del archivo
+# como version: cambia sola en cada deploy, sin tocar nada a mano.
+def _mtime_version(*path_parts: str) -> int:
+    try:
+        return int(os.path.getmtime(os.path.join("app", *path_parts)))
+    except OSError:
+        return 0
+
+
+templates.env.globals["css_version"] = _mtime_version("static", "css", "app.css")
+templates.env.globals["js_version"] = _mtime_version("static", "js", "app.js")
 
 
 def host_status(metric: Metric | None) -> str:
