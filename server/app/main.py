@@ -16,10 +16,25 @@ from app.services.vuln_scan import run_forever as vuln_scan_run_forever
 logging.basicConfig(level=logging.INFO)
 
 
+async def _connect_with_retry(max_attempts: int = 10, delay_seconds: float = 2.0) -> None:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            return
+        except Exception as exc:
+            if attempt == max_attempts:
+                raise
+            logging.warning(
+                "No se pudo conectar a la base de datos (intento %s/%s): %s. Reintentando en %ss...",
+                attempt, max_attempts, exc, delay_seconds,
+            )
+            await asyncio.sleep(delay_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    await _connect_with_retry()
     tasks = [
         asyncio.create_task(alerting_run_forever()),
         asyncio.create_task(vuln_scan_run_forever()),
