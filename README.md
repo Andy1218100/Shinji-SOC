@@ -126,7 +126,8 @@ http://localhost:8000/security (SOC) y http://localhost:8000/users
 
 ```bash
 # 1. Cuenta gratuita + license key: https://www.maxmind.com/en/geolite2/signup
-# 2. Agregar MAXMIND_LICENSE_KEY=... en .env
+# 2. Agregar MAXMIND_ACCOUNT_ID=... y MAXMIND_LICENSE_KEY=... en .env
+#    (el Account ID aparece arriba a la izquierda en tu cuenta de MaxMind)
 ./scripts/update_geoip_db.sh
 docker compose restart server
 ```
