@@ -6,8 +6,8 @@ from app.api.deps import get_current_host
 from app.core.db import get_db
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage
-from app.schemas.logs import InventoryIn, LogBatchIn, ProcessEventBatchIn
-from app.services import ids, process_anomaly
+from app.schemas.logs import InventoryIn, LogBatchIn, ProcessEventBatchIn, SystemReportIn
+from app.services import ids, process_anomaly, system_report
 
 router = APIRouter(prefix="/api/v1", tags=["security-ingest"])
 
@@ -47,3 +47,23 @@ async def ingest_inventory(
         host.debian_release = payload.debian_release
     await db.commit()
     return {"status": "ok", "received": len(payload.packages)}
+
+
+@router.post("/system-report/ingest", status_code=201)
+async def ingest_system_report(
+    payload: SystemReportIn,
+    host: Host = Depends(get_current_host),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lo que el agente descubre del sistema al arrancar (y despues una vez
+    al dia): sistema operativo, hardware, servicios, puertos, y que logs/
+    cuentas de servicio detecto para vigilar. Actualiza el perfil del host
+    y dispara el informe de IA."""
+    if payload.os_name:
+        host.os = payload.os_name
+    if payload.os_version_id:
+        host.debian_release = payload.os_version_id
+    await db.commit()
+
+    await system_report.save_and_summarize(db, host, payload)
+    return {"status": "ok"}

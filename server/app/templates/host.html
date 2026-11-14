@@ -8,6 +8,13 @@
 </div>
 
 <section class="panel">
+  <h2>Informe del sistema</h2>
+  <div id="system-report-wrap">
+    <div class="empty-state"><p>Cargando...</p></div>
+  </div>
+</section>
+
+<section class="panel">
   <h2>Metricas (ultima hora)</h2>
   <canvas id="chart" height="90"></canvas>
 </section>
@@ -48,6 +55,63 @@ async function loadMetrics() {
   });
 }
 loadMetrics();
+
+function formatDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function tagGroup(title, items, emptyText) {
+  const body = items.length
+    ? `<div class="report-tags">${items.map(i => `<span class="badge neutral">${i}</span>`).join("")}</div>`
+    : `<p style="color: var(--text-muted); font-size: var(--text-sm);">${emptyText}</p>`;
+  return `<div class="report-tag-group"><h4>${title}</h4>${body}</div>`;
+}
+
+async function loadSystemReport() {
+  const wrap = document.getElementById("system-report-wrap");
+  let data;
+  try {
+    const res = await fetch(`/api/v1/hosts/{{ host.id }}/system-report`);
+    if (!res.ok) throw new Error(String(res.status));
+    data = await res.json();
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><p>No se pudo cargar el informe.</p></div>`;
+    return;
+  }
+
+  if (!data.available) {
+    wrap.innerHTML = `
+      <div class="empty-state">
+        <p>El agente todavia no mando su informe inicial. Aparece solo apenas arranca en el host.</p>
+      </div>`;
+    return;
+  }
+
+  const r = data.raw || {};
+  const ports = (r.listening_ports || []).map(p => p.process ? `${p.port} (${p.process})` : `${p.port}`);
+
+  wrap.innerHTML = `
+    <div class="report-fact-grid">
+      <div><div class="report-fact-label">Sistema operativo</div><div class="report-fact-value">${r.os_name || "-"}</div></div>
+      <div><div class="report-fact-label">Kernel</div><div class="report-fact-value">${r.kernel || "-"}</div></div>
+      <div><div class="report-fact-label">CPUs</div><div class="report-fact-value">${r.cpu_count ?? "-"}</div></div>
+      <div><div class="report-fact-label">RAM</div><div class="report-fact-value">${r.mem_total_mb ? Math.round(r.mem_total_mb) + " MB" : "-"}</div></div>
+      <div><div class="report-fact-label">Disco</div><div class="report-fact-value">${r.disk_total_gb ? Math.round(r.disk_total_gb) + " GB" : "-"}</div></div>
+      <div><div class="report-fact-label">Ultimo informe</div><div class="report-fact-value">${formatDate(data.generated_at)}</div></div>
+    </div>
+    ${tagGroup("Servicios detectados", r.services || [], "Ninguno reconocido.")}
+    ${tagGroup("Puertos en escucha", ports, "Ninguno detectado.")}
+    ${tagGroup("Logs que vigila (personalizado para este host)", r.log_paths || [], "No encontro logs de servidor web conocidos.")}
+    ${tagGroup("Cuentas de servicio que vigila", r.service_accounts || [], "No encontro cuentas de servicio corriendo.")}
+    ${data.ai_summary
+      ? `<div class="report-ai-summary">${data.ai_summary}</div>`
+      : `<p style="color: var(--text-muted); font-size: var(--text-sm);">La IA todavia no genero el informe narrativo.</p>`}
+  `;
+}
+loadSystemReport();
 
 document.getElementById('ask-form').addEventListener('submit', async (event) => {
   event.preventDefault();

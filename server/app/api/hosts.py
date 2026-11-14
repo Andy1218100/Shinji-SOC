@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.host import Host
+from app.models.system_report import SystemReport
 from app.schemas.host import HostCreate, HostCreated, HostOut
 from app.services import geoip
 
@@ -58,3 +59,18 @@ async def get_host(host_id: str, db: AsyncSession = Depends(get_db)):
     if host is None:
         raise HTTPException(status_code=404, detail="Host no encontrado")
     return _host_out_with_geo(host)
+
+
+@router.get("/{host_id}/system-report", dependencies=[Depends(get_current_user)])
+async def get_system_report(host_id: str, db: AsyncSession = Depends(get_db)):
+    report = (
+        await db.execute(select(SystemReport).where(SystemReport.host_id == host_id))
+    ).scalar_one_or_none()
+    if report is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "raw": report.raw,
+        "ai_summary": report.ai_summary,
+        "generated_at": report.generated_at,
+    }

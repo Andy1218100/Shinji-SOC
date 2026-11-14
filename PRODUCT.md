@@ -50,16 +50,25 @@ executes admin-approved actions through narrowly scoped sudo rules
 
 ## Capabilities and Constraints
 
+- System discovery (resolved 2026-11-14): the first thing the agent does on
+  a new host, before any ongoing monitoring, is fingerprint the system — OS,
+  kernel, hardware, running services, listening ports — and report it. The
+  server turns that into a plain-language report via the local AI, shown on
+  the host's page. The same discovery data is what the agent uses to decide,
+  per host, which web server log to tail and which service accounts to
+  watch for process anomalies — no more hand-editing `log_paths`/
+  `service_users` identically for every machine. A manual override in the
+  agent's `config.yaml` still wins if set, for non-standard setups.
 - Metrics: CPU/mem/disk/network/load per host, threshold-based alert rules,
   AI-generated explanations for triggered alerts.
 - Intrusion detection: path-scan and brute-force/flood detection, parsed
   only from nginx/apache "combined" access log format — other log formats
   are not parsed and those lines are silently skipped.
 - Process anomaly detection: a fixed blacklist of binaries (shells,
-  interpreters, network tools) flagged when run under configured
-  service-account users (e.g. www-data). This is heuristic by design and
-  expected to false-positive on apps that legitimately shell out — it is
-  always suggest-only, never automatic.
+  interpreters, network tools) flagged when run under configured (or
+  auto-detected) service-account users (e.g. www-data). This is heuristic
+  by design and expected to false-positive on apps that legitimately shell
+  out — it is always suggest-only, never automatic.
 - GeoIP attack map: optional. Requires the operator's own MaxMind GeoLite2
   license key; without it, events show in the list with no map point.
 - AI backends: Ollama running locally by default — `qwen2.5:3b`, chosen

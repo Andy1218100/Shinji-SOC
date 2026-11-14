@@ -4,23 +4,26 @@ api_key: "LA_API_KEY_DEL_HOST"
 
 metrics_interval_seconds: 15
 
-# Logs de servidor web a vigilar (formato "combined" de nginx/apache).
-log_paths:
-  - /var/log/nginx/access.log
+# El agente se autodescubre al arrancar (ver discovery.py): sistema
+# operativo, servicios corriendo, puertos en escucha, y a partir de eso
+# detecta que logs de servidor web y que cuentas de servicio tiene
+# sentido vigilar EN ESTE HOST. No hace falta completar log_paths ni
+# process_watch.service_users a mano -- dejalos vacios (como abajo) para
+# que se autodetecten. Si los completas, lo que pongas aca gana siempre
+# sobre lo autodetectado (por si el setup es no estandar).
+log_paths: []
 
-# Cuentas de servicio cuyos procesos se vigilan. Si una de estas cuentas
-# ejecuta un binario de la lista suspicious_binaries (ver process_watch.py),
-# se reporta como posible webshell/RCE.
 process_watch:
   interval_seconds: 10
-  service_users:
-    - www-data
-    - nginx
-    - apache
+  service_users: []
 
 # Inventario de paquetes (dpkg) para el escaneo diario de vulnerabilidades
 # en el servidor (OSV.dev). 86400s = 1 vez al dia.
 inventory_interval_seconds: 86400
+
+# Repetir el autodescubrimiento (por si se instala un servicio nuevo
+# despues) y reenviar el informe de sistema. 86400s = 1 vez al dia.
+discovery_interval_seconds: 86400
 
 command_poll_interval_seconds: 10
 

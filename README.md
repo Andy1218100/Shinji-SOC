@@ -87,9 +87,11 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   PostgreSQL/TimescaleDB, resuelve GeoIP y expone un endpoint de IA para
   preguntar sobre el estado de los hosts.
 - `agent/`: agente Python (un solo proceso, varias tareas async) que se
-  instala en cada servidor Linux: envia metricas, lee logs de acceso,
-  vigila procesos de cuentas de servicio, reporta el inventario de
-  paquetes (`dpkg`) y ejecuta (via sudo acotado) los bloqueos/kills que
+  instala en cada servidor Linux: se autodescubre al arrancar (SO,
+  hardware, servicios, puertos) para personalizar que vigila, envia
+  metricas, lee logs de acceso, vigila procesos de cuentas de servicio,
+  reporta el inventario de paquetes (`dpkg`) y ejecuta (via sudo acotado)
+  los bloqueos/kills que
   el administrador aprueba.
 - `docker-compose.yml`: levanta base de datos, Ollama y el servidor.
 
@@ -210,16 +212,29 @@ cd /tmp/prox-secure-agent
 sudo ./install.sh http://TU_SERVIDOR:8000 LA_API_KEY_DEL_HOST
 ```
 
-Esto crea un usuario de sistema sin privilegios, instala fail2ban, un
-virtualenv, el sudoers acotado (`/etc/sudoers.d/prox-secure-agent`, solo
-permite `fail2ban-client set * banip/unbanip *` y el wrapper
-`kill_process.sh`) y un servicio systemd (`prox-secure-agent`) con el
-agente completo (metricas + logs + procesos + comandos).
+Esto crea un usuario de sistema sin privilegios (en el grupo `adm`, para
+poder leer logs del sistema), instala fail2ban, un virtualenv, el
+sudoers acotado (`/etc/sudoers.d/prox-secure-agent`, solo permite
+`fail2ban-client set * banip/unbanip *` y el wrapper `kill_process.sh`)
+y un servicio systemd (`prox-secure-agent`) con el agente completo
+(descubrimiento + metricas + logs + procesos + inventario + comandos).
 
-Por defecto solo las metricas estan activas. Para activar logs de acceso
-y vigilancia de procesos, editar `/opt/prox-secure-agent/config.yaml`
-(ver `agent/config.example.yaml`) y reiniciar: `systemctl restart
-prox-secure-agent`.
+### Descubrimiento automatico (personalizado por host)
+
+Lo primero que hace el agente al arrancar es describir el sistema:
+sistema operativo, hardware, servicios corriendo (nginx, postgres,
+redis, etc.), puertos en escucha, y a partir de eso **detecta solo**
+que logs de servidor web y que cuentas de servicio tiene sentido vigilar
+*en ese host en particular* -- no hace falta editar `log_paths` ni
+`process_watch.service_users` a mano para cada maquina. El servidor
+arma ademas un informe en lenguaje natural con la IA local, visible en
+la pagina del host (`/hosts/<id>`).
+
+Si un setup no es estandar (logs en otro lado, otra cuenta de servicio),
+se puede seguir fijando `log_paths`/`process_watch.service_users` a mano
+en `/opt/prox-secure-agent/config.yaml` (ver `agent/config.example.yaml`)
+-- lo que se defina ahi gana siempre sobre lo autodetectado. Despues de
+cualquier cambio: `systemctl restart prox-secure-agent`.
 
 ## Eventos de seguridad: ver, aprobar, bloquear
 

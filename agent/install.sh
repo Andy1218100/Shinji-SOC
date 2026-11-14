@@ -19,6 +19,10 @@ if ! command -v fail2ban-client &>/dev/null; then
 fi
 
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
+# Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
+# /var/log/apache2, etc. Sin esto, los logs que el agente autodetecta
+# (ver discovery.py) existen pero no los puede leer.
+usermod -aG adm prox-secure
 
 mkdir -p "$INSTALL_DIR"
 cp "$SCRIPT_DIR"/*.py "$INSTALL_DIR/"
@@ -56,6 +60,10 @@ visudo -c -f /etc/sudoers.d/prox-secure-agent
 
 cp "$SCRIPT_DIR/prox-secure-agent.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now prox-secure-agent
+systemctl enable prox-secure-agent
+# restart (no start): si install.sh se re-corre sobre un agente que ya
+# estaba activo, "start" no hace nada y el proceso se queda sin el grupo
+# "adm" recien agregado hasta el proximo reinicio manual.
+systemctl restart prox-secure-agent
 
 echo "Agente instalado y corriendo. Ver logs: journalctl -u prox-secure-agent -f"
