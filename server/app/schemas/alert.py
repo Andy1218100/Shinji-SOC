@@ -41,4 +41,5 @@ class AlertOut(BaseModel):
 class AskRequest(BaseModel):
     question: str
     host_id: str | None = None
+    scope: str | None = None  # "security" | "vulnerabilities", ignorado si hay host_id
     backend: str | None = None  # "ollama" | "claude"

@@ -23,6 +23,15 @@
   </div>
 </section>
 
+<section class="panel">
+  <h2>Preguntar a la IA</h2>
+  <form id="ask-form">
+    <input type="text" id="question" placeholder="Ej: cual vulnerabilidad deberia priorizar?" style="width: 60%;" />
+    <button type="submit" class="primary">Preguntar</button>
+  </form>
+  <p id="ai-answer" style="color: var(--text-primary); margin-top: var(--space-3);"></p>
+</section>
+
 <script>
 const severityClass = { critical: 'crit', warning: 'warn' };
 let hostNames = {};
@@ -141,5 +150,23 @@ async function acknowledge(id) {
 })();
 setInterval(loadInventoryStatus, 30000);
 setInterval(loadVulnerabilities, 30000);
+
+document.getElementById('ask-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const question = document.getElementById('question').value.trim();
+  const answerEl = document.getElementById('ai-answer');
+  if (!question) {
+    toast('Escribe una pregunta primero.', 'error');
+    return;
+  }
+  answerEl.textContent = 'Pensando...';
+  const res = await fetch('/api/v1/ai/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, scope: 'vulnerabilities' }),
+  });
+  const data = await res.json();
+  answerEl.textContent = data.answer || JSON.stringify(data);
+});
 </script>
 {% endblock %}
