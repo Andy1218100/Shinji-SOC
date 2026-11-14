@@ -21,8 +21,14 @@
   </div>
   <div id="map" style="height: 360px;"></div>
   <p style="font-size: var(--text-xs); margin-top: var(--space-2);">
+    {% if geoip_configured %}
+    GeoIP configurado. Un evento solo aparece como punto/arco si su IP de origen es publica y
+    geolocalizable (las IP privadas, reservadas o de rango de documentacion -- 192.0.2.0/24,
+    198.51.100.0/24, 203.0.113.0/24 -- nunca tienen ubicacion real, es normal que no aparezcan).
+    {% else %}
     Sin base GeoIP configurada (MaxMind), los eventos aparecen en la lista pero sin punto en el mapa.
-    Los arcos hacia un host necesitan que ese host tenga una IP publica geolocalizable.
+    {% endif %}
+    Los arcos hacia un host necesitan ademas que ese host tenga una IP publica geolocalizable.
   </p>
   <h3 style="margin-top: var(--space-4);">Origenes mas activos</h3>
   <div id="origins-list" class="origins-list"></div>

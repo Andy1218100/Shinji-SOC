@@ -9,6 +9,7 @@ from app.models.alert import Alert
 from app.models.host import Host
 from app.models.metric import Metric
 from app.models.user import User
+from app.services import geoip
 
 router = APIRouter(tags=["dashboard"])
 templates = Jinja2Templates(directory="app/templates")
@@ -76,7 +77,13 @@ async def host_detail(
 @router.get("/security")
 async def security_page(request: Request, user: User = Depends(get_current_user)):
     return templates.TemplateResponse(
-        "security.html", {"request": request, "active_nav": "seguridad", "user": user}
+        "security.html",
+        {
+            "request": request,
+            "active_nav": "seguridad",
+            "user": user,
+            "geoip_configured": geoip.is_configured(),
+        },
     )
 
 

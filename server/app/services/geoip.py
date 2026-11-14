@@ -38,6 +38,10 @@ def _reader():
     return geoip2.database.Reader(settings.geoip_db_path)
 
 
+def is_configured() -> bool:
+    return os.path.exists(settings.geoip_db_path)
+
+
 def lookup(ip: str) -> GeoResult:
     if any(ip.startswith(p) for p in _PRIVATE_PREFIXES) or ip in ("localhost", "::1"):
         return GeoResult(None, None, None, None)

@@ -16,6 +16,10 @@ from app.services.event_bus import security_events_bus
 router = APIRouter(prefix="/api/v1", tags=["security"])
 
 SSE_KEEPALIVE_SECONDS = 15
+# Un stream SSE abierto para siempre bloquea el reinicio/shutdown del
+# proceso (uvicorn espera a que las conexiones abiertas terminen solas).
+# Lo cerramos cada tanto y dejamos que EventSource reconecte solo.
+SSE_MAX_CONNECTION_SECONDS = 300
 
 
 @router.get("/security-events/stream", dependencies=[Depends(get_current_user)])
@@ -23,8 +27,9 @@ async def stream_security_events(request: Request):
     queue = security_events_bus.subscribe()
 
     async def event_generator():
+        started = asyncio.get_event_loop().time()
         try:
-            while True:
+            while asyncio.get_event_loop().time() - started < SSE_MAX_CONNECTION_SECONDS:
                 if await request.is_disconnected():
                     break
                 try:
