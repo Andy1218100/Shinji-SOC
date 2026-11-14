@@ -420,6 +420,12 @@ table.data tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* Resplandor detras del arco animado del mapa de ataques, para que se
+   lea como un haz de luz viajando y no una linea plana. */
+.arc-glow {
+  filter: blur(4px);
+}
+
 /* Badges (severity) */
 .badge {
   display: inline-block;

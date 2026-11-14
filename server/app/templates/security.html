@@ -102,19 +102,54 @@ async function loadHostMarkers() {
   } catch (e) { /* sin hosts geolocalizables todavia */ }
 }
 
+// Curva bezier entre origen y destino (en vez de linea recta), arqueada
+// hacia un lado como un "salto" -- look clasico de mapa de ataques.
+function curvedLatLngs(start, end, segments = 60) {
+  const [lat1, lon1] = start;
+  const [lat2, lon2] = end;
+  const dLat = lat2 - lat1;
+  const dLon = lon2 - lon1;
+  const dist = Math.sqrt(dLat * dLat + dLon * dLon) || 0.0001;
+  const bow = dist * 0.22;
+  const ctrlLat = (lat1 + lat2) / 2 + (-dLon / dist) * bow;
+  const ctrlLon = (lon1 + lon2) / 2 + (dLat / dist) * bow;
+
+  const points = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const mt = 1 - t;
+    points.push([
+      mt * mt * lat1 + 2 * mt * t * ctrlLat + t * t * lat2,
+      mt * mt * lon1 + 2 * mt * t * ctrlLon + t * t * lon2,
+    ]);
+  }
+  return points;
+}
+
 function updateArcs(events) {
   arcGroup.clearLayers();
   for (const ev of events) {
     const dest = hostGeoById[ev.host_id];
     if (!(ev.geo_lat && ev.geo_lon && dest)) continue;
     const color = ev.severity === 'critical' ? '#e5595c' : '#e0a030';
-    L.polyline.antPath([[ev.geo_lat, ev.geo_lon], [dest.lat, dest.lon]], {
+    const curve = curvedLatLngs([ev.geo_lat, ev.geo_lon], [dest.lat, dest.lon]);
+
+    // Resplandor de fondo (linea ancha, difuminada con CSS) + el haz
+    // animado encima, mas fino y brillante -- simula luz viajando.
+    L.polyline(curve, {
+      color,
+      weight: 6,
+      opacity: 0.25,
+      className: 'arc-glow',
+    }).addTo(arcGroup);
+
+    L.polyline.antPath(curve, {
       color,
       pulseColor: '#ffffff',
-      delay: 900,
-      dashArray: [8, 18],
-      weight: 2,
-      opacity: 0.55,
+      delay: 700,
+      dashArray: [10, 34],
+      weight: 2.5,
+      opacity: 0.9,
     }).addTo(arcGroup);
   }
 }
