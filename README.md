@@ -282,10 +282,19 @@ la pagina del host (`/hosts/<id>`).
   imagenes de contenedores bajadas, el storage de Podman por si solo
   tenia miles de carpetas (cada capa de cada imagen duplica un
   filesystem entero, con su propio `/var/log` adentro) y agotaba el
-  tope de busqueda antes de llegar a los logs reales de la app -- se
-  encontro y corrigio probando contra un caso real (AMP + Podman).
+  presupuesto de busqueda antes de llegar a los logs reales de la app.
   Entre las carpetas que no son ruido conocido, prioriza primero las
   que tengan "log" en el nombre.
+
+  El presupuesto de busqueda es por carpeta raiz (`/var/log`, `/opt`,
+  `/srv`, `/home`, `/root`), no uno solo compartido entre las cinco --
+  si una sola tuviera contenido real enorme (medido en un servidor real:
+  `/home` con mas de 112.000 carpetas, instalaciones completas de
+  varios servidores de juego) no debe poder dejar a las demas sin
+  presupuesto. `os.walk` recorre del orden de 50.000 carpetas/segundo,
+  asi que hasta un arbol de ese tamano se recorre en un par de segundos
+  -- costo unico al arrancar el agente o 1 vez al dia, no en un loop
+  caliente.
 
   Encontrar un archivo y poder leerlo son dos cosas distintas: si una
   app guarda sus logs en una carpeta con permisos cerrados (0700, solo

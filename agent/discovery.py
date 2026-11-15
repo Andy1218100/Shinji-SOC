@@ -64,8 +64,18 @@ LOG_DIRNAME_MARKER = "log"  # substring, no igualdad exacta: cubre "logs", "AMP_
 # tipo .ampdata/instances/<id>/<juego>/<carpeta-del-juego>/logs/...) anidan
 # bastante.
 LOG_SCAN_MAX_DEPTH = 10
-LOG_SCAN_MAX_DIRS = 8000  # tope de directorios visitados, para no colgarse en arboles enormes
-LOG_SCAN_MAX_RESULTS = 80
+# Medido en un servidor real (Proxmox + AMP con varias instancias de
+# juego + Podman): /home solo tenia 112.381 carpetas, con contenido de
+# verdad (instalaciones completas de juegos) ademas de lo que ya se filtra
+# de Podman. os.walk mide ~49.000 carpetas/seg en este tipo de arbol, asi
+# que hasta ese numero real se recorre en un par de segundos -- costo
+# unico al arrancar el agente (o 1 vez al dia), nunca en un loop caliente.
+# Por raiz, no total: si se dividiera un total entre las 5 rutas, una
+# sola con mucho contenido real (como paso con /home) se quedaria corta.
+# Peor caso si las 5 fueran igual de grandes: 5 x 200.000 ~ 20s a la
+# velocidad medida arriba -- aceptable para algo que corre 1 vez al dia.
+LOG_SCAN_MAX_DIRS_PER_ROOT = 200_000
+LOG_SCAN_MAX_RESULTS = 100
 # Carpetas que nunca tiene sentido recorrer buscando logs de aplicacion:
 # son potencialmente enormes y lo unico que van a aportar es ruido
 # repetido. El caso real que motivo esto: el storage de imagenes de
@@ -185,26 +195,26 @@ def _scan_for_log_files() -> tuple[list[str], list[str]]:
     """
     found: set[str] = set()
     denied_dirs: set[str] = set()
-    visited_dirs = 0
 
     def _on_error(exc: OSError) -> None:
         if exc.filename:
             denied_dirs.add(exc.filename)
 
     for root in LOG_SCAN_ROOTS:
-        if len(found) >= LOG_SCAN_MAX_RESULTS or visited_dirs >= LOG_SCAN_MAX_DIRS:
+        if len(found) >= LOG_SCAN_MAX_RESULTS:
             break
         if not os.path.isdir(root):
             continue
 
+        visited_in_root = 0
         base_depth = root.rstrip(os.sep).count(os.sep)
         try:
             walker = os.walk(root, onerror=_on_error)
             for dirpath, dirnames, filenames in walker:
-                visited_dirs += 1
+                visited_in_root += 1
                 depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
 
-                if visited_dirs >= LOG_SCAN_MAX_DIRS or len(found) >= LOG_SCAN_MAX_RESULTS:
+                if visited_in_root >= LOG_SCAN_MAX_DIRS_PER_ROOT or len(found) >= LOG_SCAN_MAX_RESULTS:
                     dirnames[:] = []
                     break
                 if _should_skip_dir(dirpath):
