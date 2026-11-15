@@ -49,6 +49,21 @@ def _build_prompt(host: Host, payload: SystemReportIn) -> str:
         f"Logs que el agente va a vigilar ({len(payload.log_paths)} en total): "
         + _join_capped(payload.log_paths, 10, "ninguno encontrado") + "."
     )
+    if payload.unreadable_log_paths:
+        lines.append(
+            f"Logs que se encontraron pero el agente NO tiene permiso de leer "
+            f"({len(payload.unreadable_log_paths)} en total): "
+            + _join_capped(payload.unreadable_log_paths, 10, "") + ". "
+            "El administrador deberia darle permiso de lectura al usuario del agente sobre esos archivos."
+        )
+    if payload.denied_log_dirs:
+        lines.append(
+            f"Carpetas que el agente ni siquiera pudo abrir para buscar logs adentro "
+            f"({len(payload.denied_log_dirs)} en total): "
+            + _join_capped(payload.denied_log_dirs, 10, "") + ". "
+            "Puede haber logs invisibles ahi dentro (comun en apps que guardan todo bajo un "
+            "directorio con permisos cerrados, ej. un directorio oculto propio)."
+        )
     lines.append(
         "Cuentas de servicio que el agente va a vigilar por posible webshell/RCE: "
         + _join_capped(payload.service_accounts, 15, "ninguna encontrada") + "."

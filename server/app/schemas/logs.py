@@ -57,4 +57,11 @@ class SystemReportIn(BaseModel):
     services: list[str] = []
     listening_ports: list[ListeningPortIn] = []
     log_paths: list[str] = []
+    # Encontrados por el escaneo de logs pero que el agente no puede leer
+    # (unreadable_log_paths) o ni siquiera listar (denied_log_dirs, tipico
+    # de apps que guardan todo bajo un directorio con permisos cerrados,
+    # ej. ".ampdata" de AMP) -- separado de log_paths para poder avisar
+    # del problema en vez de fallar en silencio.
+    unreadable_log_paths: list[str] = []
+    denied_log_dirs: list[str] = []
     service_accounts: list[str] = []

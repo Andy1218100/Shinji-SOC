@@ -274,6 +274,17 @@ la pagina del host (`/hosts/<id>`).
   no tengan formato "combined" de acceso HTTP se ignoran solas, sin
   error, asi que el costo de vigilar uno que no sirve es nomas un poco
   de I/O de mas.
+
+  Encontrar un archivo y poder leerlo son dos cosas distintas: muchas
+  apps (AMP incluido, que suele guardar todo bajo un directorio oculto
+  tipo `.ampdata` con permisos cerrados) tienen sus logs en una carpeta
+  que el agente no puede ni abrir, o en un archivo que no puede leer. El
+  informe del host (`/hosts/<id>`) separa esto en dos listas especificas
+  -- "logs encontrados pero sin permiso" y "carpetas que no se pudieron
+  ni abrir" -- en vez de fallar en silencio. Si aparece algo ahi y queres
+  que se vigile, hay que darle permiso de lectura al usuario `prox-secure`
+  (ej. agregandolo al grupo dueno de esos archivos, o con ACLs si el
+  directorio es de un solo usuario).
 - **Cuentas de servicio**: cualquier cuenta de sistema (por convencion
   Debian/Ubuntu: UID menor a 1000, o shell `nologin`/`false`) que tenga
   un proceso corriendo en este momento -- no una lista fija de nombres

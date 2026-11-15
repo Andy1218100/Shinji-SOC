@@ -203,7 +203,9 @@ SYSTEM_UID_MAX = 999  # convencion Debian/Ubuntu: UIDs de cuentas de sistema son
 LOG_SCAN_ROOTS = ("/var/log", "/opt", "/srv", "/home", "/root")
 LOG_FILENAME_MARKERS = (".log", ".logs")
 LOG_DIRNAME_MARKERS = ("log", "logs")
-LOG_SCAN_MAX_DEPTH = 6
+# 8, no 6: algunas apps (ej. AMP, que guarda todo bajo un directorio oculto
+# tipo .ampdata/instances/<id>/<app>/logs/...) anidan bastante.
+LOG_SCAN_MAX_DEPTH = 8
 LOG_SCAN_MAX_DIRS = 2000  # tope de directorios visitados, para no colgarse en arboles enormes
 LOG_SCAN_MAX_RESULTS = 40
 
@@ -281,7 +283,7 @@ def _looks_like_log(filename: str) -> bool:
     return any(marker in lowered for marker in LOG_FILENAME_MARKERS)
 
 
-def _scan_for_log_files() -> list[str]:
+def _scan_for_log_files() -> tuple[list[str], list[str]]:
     """Busqueda acotada (no toda la raiz, con tope de carpetas y resultados)
     de cualquier archivo que parezca un log, mas alla de los paths fijos de
     nginx/apache. Que un archivo aparezca aca no garantiza que sea un log
@@ -289,9 +291,23 @@ def _scan_for_log_files() -> list[str]:
     silencio cualquier linea que no tenga el formato esperado, asi que el
     costo de vigilar uno que no sirve es nomas un poco de I/O, nunca un
     error. Se prioriza mostrar todo lo que puede ser relevante (lo pidio
-    el usuario explicitamente) por sobre ser quirurgico."""
+    el usuario explicitamente) por sobre ser quirurgico.
+
+    Devuelve (encontrados, carpetas_sin_permiso_de_entrar). Esto ultimo
+    importa para apps que guardan todo bajo un directorio con permisos
+    cerrados (ej. 0700, solo el dueno) -- tipicamente un directorio oculto
+    como ".ampdata" en instalaciones de AMP. Si el agente no puede ni
+    listar esa carpeta, lo de adentro queda invisible para el
+    descubrimiento (no es que lo encuentre y no lo pueda leer: direc-
+    tamente no lo ve), y eso hay que poder distinguirlo y mostrarlo.
+    """
     found: set[str] = set()
+    denied_dirs: set[str] = set()
     visited_dirs = 0
+
+    def _on_error(exc: OSError) -> None:
+        if exc.filename:
+            denied_dirs.add(exc.filename)
 
     for root in LOG_SCAN_ROOTS:
         if len(found) >= LOG_SCAN_MAX_RESULTS or visited_dirs >= LOG_SCAN_MAX_DIRS:
@@ -301,7 +317,7 @@ def _scan_for_log_files() -> list[str]:
 
         base_depth = root.rstrip(os.sep).count(os.sep)
         try:
-            walker = os.walk(root, onerror=lambda e: None)
+            walker = os.walk(root, onerror=_on_error)
             for dirpath, dirnames, filenames in walker:
                 visited_dirs += 1
                 depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
@@ -324,17 +340,27 @@ def _scan_for_log_files() -> list[str]:
         except Exception:
             logger.exception("Fallo buscando logs en %s", root)
 
-    return sorted(found)
+    return sorted(found), sorted(denied_dirs)
 
 
-def detect_log_paths() -> list[str]:
-    paths: set[str] = set()
-    for candidates in WEB_SERVER_LOG_CANDIDATES.values():
-        for path in candidates:
+def detect_log_paths() -> dict:
+    candidates: set[str] = set()
+    for paths in WEB_SERVER_LOG_CANDIDATES.values():
+        for path in paths:
             if os.path.exists(path):
-                paths.add(path)
-    paths.update(_scan_for_log_files())
-    return sorted(paths)
+                candidates.add(path)
+
+    scanned, denied_dirs = _scan_for_log_files()
+    candidates.update(scanned)
+
+    # Encontrar un archivo (listar la carpeta que lo contiene) y poder leer
+    # su contenido son dos permisos distintos en Linux -- hay que chequear
+    # los dos para no vigilar a ciegas algo que el agente no va a poder
+    # abrir nunca.
+    readable = sorted(p for p in candidates if os.access(p, os.R_OK))
+    unreadable = sorted(candidates - set(readable))
+
+    return {"readable": readable, "unreadable": unreadable, "denied_dirs": denied_dirs}
 
 
 def _is_system_account(entry: pwd.struct_passwd) -> bool:
@@ -373,7 +399,10 @@ def full_report() -> dict:
     report = {**detect_os(), **detect_hardware()}
     report["services"] = detect_running_services()
     report["listening_ports"] = detect_listening_ports()
-    report["log_paths"] = detect_log_paths()
+    log_info = detect_log_paths()
+    report["log_paths"] = log_info["readable"]
+    report["unreadable_log_paths"] = log_info["unreadable"]
+    report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()
     return report
 PROXSECURE_EMBED_3_EOF

@@ -269,6 +269,16 @@ function tagGroup(title, items, emptyText) {
   return `<div class="report-tag-group"><h4>${title}</h4>${body}</div>`;
 }
 
+// Solo se muestra si hay algo -- son avisos de "encontre esto pero no lo
+// puedo vigilar por permisos", no tiene sentido ocuparle lugar a la UI
+// cuando no hay nada de eso (el caso comun).
+function tagGroupWarnIfAny(title, items, hint) {
+  if (!items || !items.length) return "";
+  const tags = items.map(i => `<span class="badge warn">${i}</span>`).join("");
+  return `<div class="report-tag-group"><h4>${title}</h4><div class="report-tags">${tags}</div>
+    <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">${hint}</p></div>`;
+}
+
 async function loadSystemReport() {
   const wrap = document.getElementById("system-report-wrap");
   let data;
@@ -308,6 +318,16 @@ async function loadSystemReport() {
     ${tagGroup("Servicios detectados", r.services || [], "Ninguno reconocido.")}
     ${tagGroup("Puertos en escucha", ports, "Ninguno detectado.")}
     ${tagGroup("Logs que vigila (personalizado para este host)", r.log_paths || [], "No encontro logs de servidor web conocidos.")}
+    ${tagGroupWarnIfAny(
+      "Logs encontrados pero sin permiso de lectura",
+      r.unreadable_log_paths || [],
+      "El usuario del agente (prox-secure) no puede abrir estos archivos. Dale permiso de lectura (ej. agregandolo al grupo dueno) si queres que se vigilen."
+    )}
+    ${tagGroupWarnIfAny(
+      "Carpetas que no se pudieron ni abrir para buscar logs adentro",
+      r.denied_log_dirs || [],
+      "Puede haber logs invisibles aca dentro -- comun en apps que guardan todo bajo un directorio con permisos cerrados (ej. un directorio oculto propio, como .ampdata de AMP)."
+    )}
     ${tagGroup("Cuentas de servicio que vigila", r.service_accounts || [], "No encontro cuentas de servicio corriendo.")}
     ${data.ai_summary
       ? `<div class="report-ai-summary">${data.ai_summary}</div>`
