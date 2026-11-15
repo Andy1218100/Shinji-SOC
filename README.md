@@ -275,13 +275,24 @@ la pagina del host (`/hosts/<id>`).
   error, asi que el costo de vigilar uno que no sirve es nomas un poco
   de I/O de mas.
 
-  Encontrar un archivo y poder leerlo son dos cosas distintas: muchas
-  apps (AMP incluido, que suele guardar todo bajo un directorio oculto
-  tipo `.ampdata` con permisos cerrados) tienen sus logs en una carpeta
-  que el agente no puede ni abrir, o en un archivo que no puede leer. El
-  informe del host (`/hosts/<id>`) separa esto en dos listas especificas
-  -- "logs encontrados pero sin permiso" y "carpetas que no se pudieron
-  ni abrir" -- en vez de fallar en silencio. Si aparece algo ahi y queres
+  El escaneo ignora a proposito arboles que son ruido garantizado y
+  pueden ser enormes: storage de imagenes de Docker/Podman
+  (`containers/storage`), `.cache`, `node_modules`, `.git`,
+  `__pycache__`. Esto no es cosmetico: en un servidor real con varias
+  imagenes de contenedores bajadas, el storage de Podman por si solo
+  tenia miles de carpetas (cada capa de cada imagen duplica un
+  filesystem entero, con su propio `/var/log` adentro) y agotaba el
+  tope de busqueda antes de llegar a los logs reales de la app -- se
+  encontro y corrigio probando contra un caso real (AMP + Podman).
+  Entre las carpetas que no son ruido conocido, prioriza primero las
+  que tengan "log" en el nombre.
+
+  Encontrar un archivo y poder leerlo son dos cosas distintas: si una
+  app guarda sus logs en una carpeta con permisos cerrados (0700, solo
+  el dueno) el agente no la puede ni abrir. El informe del host
+  (`/hosts/<id>`) separa esto en dos listas especificas -- "logs
+  encontrados pero sin permiso" y "carpetas que no se pudieron ni
+  abrir" -- en vez de fallar en silencio. Si aparece algo ahi y queres
   que se vigile, hay que darle permiso de lectura al usuario `prox-secure`
   (ej. agregandolo al grupo dueno de esos archivos, o con ACLs si el
   directorio es de un solo usuario).

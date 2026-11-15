@@ -202,12 +202,23 @@ SYSTEM_UID_MAX = 999  # convencion Debian/Ubuntu: UIDs de cuentas de sistema son
 # /sys y montajes que no tiene sentido recorrer y pueden ser enormes).
 LOG_SCAN_ROOTS = ("/var/log", "/opt", "/srv", "/home", "/root")
 LOG_FILENAME_MARKERS = (".log", ".logs")
-LOG_DIRNAME_MARKERS = ("log", "logs")
-# 8, no 6: algunas apps (ej. AMP, que guarda todo bajo un directorio oculto
-# tipo .ampdata/instances/<id>/<app>/logs/...) anidan bastante.
-LOG_SCAN_MAX_DEPTH = 8
-LOG_SCAN_MAX_DIRS = 2000  # tope de directorios visitados, para no colgarse en arboles enormes
-LOG_SCAN_MAX_RESULTS = 40
+LOG_DIRNAME_MARKER = "log"  # substring, no igualdad exacta: cubre "logs", "AMP_Logs", "mylogs", etc.
+# 10, no 6: algunas apps (ej. AMP, que guarda todo bajo un directorio oculto
+# tipo .ampdata/instances/<id>/<juego>/<carpeta-del-juego>/logs/...) anidan
+# bastante.
+LOG_SCAN_MAX_DEPTH = 10
+LOG_SCAN_MAX_DIRS = 8000  # tope de directorios visitados, para no colgarse en arboles enormes
+LOG_SCAN_MAX_RESULTS = 80
+# Carpetas que nunca tiene sentido recorrer buscando logs de aplicacion:
+# son potencialmente enormes y lo unico que van a aportar es ruido
+# repetido. El caso real que motivo esto: el storage de imagenes de
+# podman/docker bajo .local/share/containers/storage/overlay/<hash>/diff
+# duplica un filesystem *completo* (con su propio /var/log adentro) por
+# cada capa de cada imagen bajada -- en un host con varias imagenes esto
+# son miles de carpetas, y alcanzaban a agotar el presupuesto de arriba
+# antes de llegar siquiera a los logs reales de la app (visto en un
+# servidor real con AMP: nunca llegaba a .ampdata).
+LOG_SCAN_SKIP_MARKERS = ("/containers/storage/", "/.cache/", "/node_modules/", "/.git/", "/__pycache__/")
 
 
 def detect_os() -> dict:
@@ -283,6 +294,20 @@ def _looks_like_log(filename: str) -> bool:
     return any(marker in lowered for marker in LOG_FILENAME_MARKERS)
 
 
+def _should_skip_dir(dirpath: str) -> bool:
+    normalized = dirpath.replace("\\", "/") + "/"
+    return any(marker in normalized for marker in LOG_SCAN_SKIP_MARKERS)
+
+
+def _prioritize_log_dirs(dirnames: list[str]) -> None:
+    """Reordena in-place para que, si una carpeta tiene una subcarpeta que
+    suena a logs junto con otras que no, se visite primero la que suena a
+    logs. No alcanza para decidir entre dos carpetas genericas (ninguna
+    tiene "log" en el nombre) -- para eso esta _should_skip_dir, que corta
+    de raiz los arboles que se sabe de antemano que son ruido."""
+    dirnames.sort(key=lambda d: 0 if LOG_DIRNAME_MARKER in d.lower() else 1)
+
+
 def _scan_for_log_files() -> tuple[list[str], list[str]]:
     """Busqueda acotada (no toda la raiz, con tope de carpetas y resultados)
     de cualquier archivo que parezca un log, mas alla de los paths fijos de
@@ -325,10 +350,14 @@ def _scan_for_log_files() -> tuple[list[str], list[str]]:
                 if visited_dirs >= LOG_SCAN_MAX_DIRS or len(found) >= LOG_SCAN_MAX_RESULTS:
                     dirnames[:] = []
                     break
+                if _should_skip_dir(dirpath):
+                    dirnames[:] = []
+                    continue
                 if depth >= LOG_SCAN_MAX_DEPTH:
                     dirnames[:] = []  # no seguir bajando en este subarbol
+                _prioritize_log_dirs(dirnames)
 
-                in_log_dir = os.path.basename(dirpath).lower() in LOG_DIRNAME_MARKERS
+                in_log_dir = LOG_DIRNAME_MARKER in os.path.basename(dirpath).lower()
                 for filename in filenames:
                     if len(found) >= LOG_SCAN_MAX_RESULTS:
                         break
