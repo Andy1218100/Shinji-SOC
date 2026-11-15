@@ -17,9 +17,13 @@ fi
 # ya esta, es rapido) en vez de detectar que falta uno por uno -- asi se
 # evita el problema clasico de Debian donde python3 esta pero el modulo
 # venv/pip no, porque van en paquetes separados (python3-venv, python3-pip).
-echo "Instalando dependencias del sistema (python3, venv, pip, fail2ban)..."
+# "sudo" se incluye a proposito: en hosts tipo hipervisor (Proxmox VE y
+# similares, donde todo se maneja como root directamente) suele no venir
+# instalado, y sin el no existe "visudo" (lo necesitamos mas abajo para
+# validar el sudoers acotado del agente).
+echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban)..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip fail2ban
+apt-get install -y python3 python3-venv python3-pip sudo fail2ban
 
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
