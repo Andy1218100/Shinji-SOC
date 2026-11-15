@@ -23,11 +23,13 @@ fi
 # "sudo" se incluye a proposito: en hosts tipo hipervisor (Proxmox VE y
 # similares, donde todo se maneja como root directamente) suele no venir
 # instalado, y sin el no existe "visudo" (lo necesitamos mas abajo para
-# validar el sudoers acotado del agente) ni funciona el bloqueo/kill
-# aprobado desde el dashboard (commands.py invoca "sudo" en tiempo real).
-echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban)..."
+# validar el sudoers acotado del agente) ni funciona el bloqueo/kill/
+# otorgamiento de acceso a logs aprobado desde el dashboard (commands.py
+# invoca "sudo" en tiempo real). "acl" trae setfacl, que usa
+# grant_log_access.sh para dar lectura puntual sin tocar duenos/permisos.
+echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl)..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip sudo fail2ban
+apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
 
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
@@ -41,9 +43,10 @@ echo "Escribiendo los archivos del agente en $INSTALL_DIR..."
 mkdir -p "$(dirname "$INSTALL_DIR/commands.py")"
 cat > "$INSTALL_DIR/commands.py" <<'PROXSECURE_EMBED_1_EOF'
 """Ejecuta comandos aprobados por el administrador desde el panel
-(bloquear IP via fail2ban, terminar un proceso) usando los permisos
-acotados definidos en sudoers/prox-secure-agent. El agente en si corre
-sin privilegios; solo esas dos acciones puntuales usan sudo.
+(bloquear IP via fail2ban, terminar un proceso, dar acceso de lectura a
+un log bloqueado) usando los permisos acotados definidos en
+sudoers/prox-secure-agent. El agente en si corre sin privilegios; solo
+esas acciones puntuales usan sudo.
 """
 
 import logging
@@ -51,6 +54,8 @@ import os
 import subprocess
 
 import httpx
+
+import discovery
 
 logger = logging.getLogger("commands")
 
@@ -80,6 +85,9 @@ def execute(command: dict, fail2ban_jail: str) -> tuple[bool, str]:
         expected = (payload.get("cmdline") or "")[:80]
         return _run(["sudo", f"{AGENT_DIR}/kill_process.sh", str(payload["pid"]), expected])
 
+    if action == "grant_log_access":
+        return _run(["sudo", f"{AGENT_DIR}/grant_log_access.sh", payload["path"]])
+
     return False, f"accion desconocida: {action}"
 
 
@@ -88,6 +96,7 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
     resp.raise_for_status()
     commands = resp.json()
 
+    granted_access = False
     for command in commands:
         ok, output = execute(command, fail2ban_jail)
         logger.info("Comando %s (%s): %s -> %s", command["id"], command["action"], ok, output)
@@ -96,6 +105,20 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
             headers=headers,
             json={"status": "done" if ok else "failed", "result": output},
         )
+        if command["action"] == "grant_log_access" and ok:
+            granted_access = True
+
+    if granted_access:
+        # Releer el sistema ahora, no esperar al proximo ciclo diario de
+        # discovery -- el admin acaba de dar un permiso especificamente
+        # para que esto se vea reflejado.
+        try:
+            report = discovery.full_report()
+            resp = await client.post(f"{base_url}/api/v1/system-report/ingest", json=report, headers=headers)
+            resp.raise_for_status()
+            logger.info("Informe de sistema reenviado tras otorgar acceso de lectura")
+        except Exception:
+            logger.exception("Fallo reenviando el informe de sistema tras otorgar acceso")
 PROXSECURE_EMBED_1_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/config.py")"
@@ -946,9 +969,73 @@ echo "pid $PID terminado (cmdline: $CMDLINE)"
 PROXSECURE_EMBED_10_EOF
 chmod 755 "$INSTALL_DIR/kill_process.sh"
 
+mkdir -p "$(dirname "$INSTALL_DIR/grant_log_access.sh")"
+cat > "$INSTALL_DIR/grant_log_access.sh" <<'PROXSECURE_EMBED_11_EOF'
+#!/usr/bin/env bash
+# Da a prox-secure permiso de LECTURA (via ACL -- nunca toca duenos ni
+# permisos existentes, nunca agrega escritura) sobre una carpeta o
+# archivo que discovery.py encontro pero no pudo abrir/leer. Pensado
+# para correr via sudo (ver sudoers/prox-secure-agent).
+#
+# Solo opera dentro de las mismas rutas donde discovery.py busca logs
+# (ver LOG_SCAN_ROOTS en discovery.py) -- y nunca sobre /root: el riesgo
+# de dar lectura recursiva al home de root (claves SSH, etc.) no vale la
+# pena por un log que casi seguro no esta ahi. Si el log que falta
+# resulta estar en /root, hay que revisarlo a mano por ssh.
+set -euo pipefail
+
+TARGET="${1:?uso: grant_log_access.sh <ruta absoluta>}"
+
+if [[ "$TARGET" != /* ]]; then
+  echo "la ruta debe ser absoluta" >&2
+  exit 1
+fi
+
+if [[ ! -e "$TARGET" ]]; then
+  echo "la ruta no existe: $TARGET" >&2
+  exit 1
+fi
+
+RESOLVED=$(realpath -e "$TARGET")
+
+ALLOWED_PREFIXES=("/var/log" "/opt" "/srv" "/home")
+allowed=0
+for prefix in "${ALLOWED_PREFIXES[@]}"; do
+  if [[ "$RESOLVED" == "$prefix" || "$RESOLVED" == "$prefix"/* ]]; then
+    allowed=1
+    break
+  fi
+done
+if [[ "$allowed" -ne 1 ]]; then
+  echo "ruta fuera de lo permitido ($RESOLVED) -- solo /var/log, /opt, /srv o /home (nunca /root)" >&2
+  exit 2
+fi
+
+if ! command -v setfacl &>/dev/null; then
+  echo "setfacl no esta instalado (paquete 'acl')" >&2
+  exit 3
+fi
+
+if [[ -d "$RESOLVED" ]]; then
+  # rX en vez de rx: la X mayuscula solo da ejecucion (necesaria para
+  # poder "entrar") a lo que ya es un directorio, nunca a un archivo
+  # suelto -- no vuelve ejecutable nada que no lo fuera.
+  setfacl -R -m u:prox-secure:rX "$RESOLVED"
+  # ACL por defecto: para que los logs que esa app cree DESPUES de hoy
+  # (rotacion diaria, nuevas instancias, etc.) hereden el mismo permiso
+  # sin tener que repetir esto cada vez.
+  setfacl -R -d -m u:prox-secure:rX "$RESOLVED"
+else
+  setfacl -m u:prox-secure:r "$RESOLVED"
+fi
+
+echo "acceso de lectura otorgado a prox-secure sobre $RESOLVED"
+PROXSECURE_EMBED_11_EOF
+chmod 755 "$INSTALL_DIR/grant_log_access.sh"
+
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
 mkdir -p "$(dirname "$INSTALL_DIR/config.yaml")"
-cat > "$INSTALL_DIR/config.yaml" <<'PROXSECURE_EMBED_11_EOF'
+cat > "$INSTALL_DIR/config.yaml" <<'PROXSECURE_EMBED_12_EOF'
 # Copiar a config.yaml y completar con los datos reales del host.
 server_url: "http://TU_SERVIDOR:8000"
 api_key: "LA_API_KEY_DEL_HOST"
@@ -981,7 +1068,7 @@ command_poll_interval_seconds: 10
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
 # agent/fail2ban/jail.d/proxsecure.conf).
 fail2ban_jail: proxsecure
-PROXSECURE_EMBED_11_EOF
+PROXSECURE_EMBED_12_EOF
 
   echo "Creado $INSTALL_DIR/config.yaml con valores de ejemplo."
   echo "Editalo para activar log_paths/service_users a mano si el autodescubrimiento no alcanza."
@@ -1000,7 +1087,7 @@ chown -R prox-secure:prox-secure "$INSTALL_DIR"
 
 # fail2ban: jail dedicado para bloqueos manuales via panel
 mkdir -p "$(dirname "/etc/fail2ban/filter.d/proxsecure.conf")"
-cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_12_EOF'
+cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_13_EOF'
 [Definition]
 # Este filtro nunca matchea nada a proposito: el jail "proxsecure" solo se
 # usa para bloqueos MANUALES disparados desde el panel
@@ -1008,10 +1095,10 @@ cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_12_EOF'
 # automatica via fail2ban mismo (eso lo hace el motor IDS del servidor).
 failregex = ^PROXSECURE_NUNCA_MATCHEA_ESTO$
 ignoreregex =
-PROXSECURE_EMBED_12_EOF
+PROXSECURE_EMBED_13_EOF
 
 mkdir -p "$(dirname "/etc/fail2ban/jail.d/proxsecure.conf")"
-cat > "/etc/fail2ban/jail.d/proxsecure.conf" <<'PROXSECURE_EMBED_13_EOF'
+cat > "/etc/fail2ban/jail.d/proxsecure.conf" <<'PROXSECURE_EMBED_14_EOF'
 [proxsecure]
 enabled = true
 filter = proxsecure
@@ -1021,26 +1108,27 @@ maxretry = 999999
 findtime = 86400
 bantime = 3600
 action = %(action_)s
-PROXSECURE_EMBED_13_EOF
+PROXSECURE_EMBED_14_EOF
 
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
 mkdir -p "$(dirname "/etc/sudoers.d/prox-secure-agent")"
-cat > "/etc/sudoers.d/prox-secure-agent" <<'PROXSECURE_EMBED_14_EOF'
+cat > "/etc/sudoers.d/prox-secure-agent" <<'PROXSECURE_EMBED_15_EOF'
 
 Cmnd_Alias PROXSECURE_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /usr/bin/fail2ban-client set * unbanip *, \
-                              /opt/prox-secure-agent/kill_process.sh *
+                              /opt/prox-secure-agent/kill_process.sh *, \
+                              /opt/prox-secure-agent/grant_log_access.sh *
 
 prox-secure ALL=(root) NOPASSWD: PROXSECURE_CMDS
-PROXSECURE_EMBED_14_EOF
+PROXSECURE_EMBED_15_EOF
 chmod 440 "/etc/sudoers.d/prox-secure-agent"
 
 visudo -c -f /etc/sudoers.d/prox-secure-agent
 mkdir -p "$(dirname "/etc/systemd/system/prox-secure-agent.service")"
-cat > "/etc/systemd/system/prox-secure-agent.service" <<'PROXSECURE_EMBED_15_EOF'
+cat > "/etc/systemd/system/prox-secure-agent.service" <<'PROXSECURE_EMBED_16_EOF'
 [Unit]
 Description=Prox Secure - agente de monitoreo
 After=network-online.target
@@ -1058,7 +1146,7 @@ Group=prox-secure
 
 [Install]
 WantedBy=multi-user.target
-PROXSECURE_EMBED_15_EOF
+PROXSECURE_EMBED_16_EOF
 
 systemctl daemon-reload
 systemctl enable prox-secure-agent

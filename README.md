@@ -301,10 +301,27 @@ la pagina del host (`/hosts/<id>`).
   el dueno) el agente no la puede ni abrir. El informe del host
   (`/hosts/<id>`) separa esto en dos listas especificas -- "logs
   encontrados pero sin permiso" y "carpetas que no se pudieron ni
-  abrir" -- en vez de fallar en silencio. Si aparece algo ahi y queres
-  que se vigile, hay que darle permiso de lectura al usuario `prox-secure`
-  (ej. agregandolo al grupo dueno de esos archivos, o con ACLs si el
-  directorio es de un solo usuario).
+  abrir" -- en vez de fallar en silencio.
+
+  Cada item de esas dos listas tiene un boton "Dar acceso" (solo
+  visible para admin). Pide el codigo MFA del admin para confirmar
+  (igual que eliminar un host) y, si es correcto, crea un comando que
+  el agente ejecuta via `sudo` con `setfacl` (`grant_log_access.sh`):
+  le da a `prox-secure` permiso de **lectura puntual** (ACL `r`/`rX`,
+  mas ACL default si es carpeta) sobre esa ruta especifica, sin tocar
+  duenos ni los permisos Unix existentes y sin agregar escritura ni
+  ejecucion de binarios. El servidor valida que la ruta pedida sea una
+  de las que el ultimo informe de ESE host reporto como bloqueada (no
+  cualquier ruta arbitraria), y el script del agente ademas solo acepta
+  rutas bajo `/var/log`, `/opt`, `/srv` o `/home` -- `/root` esta
+  excluido siempre, incluso si se lo pide a mano via API. Apenas el
+  agente termina el otorgamiento reenvia el informe de sistema al toque
+  (no espera al ciclo diario), asi en segundos se ve el log que antes
+  estaba bloqueado pasar a la lista de "Logs que vigila".
+
+  Si se prefiere hacerlo a mano en vez de usar el boton: agregar
+  `prox-secure` al grupo dueno de esos archivos, o usar `setfacl`
+  directamente si el directorio es de un solo usuario.
 - **Cuentas de servicio**: cualquier cuenta de sistema (por convencion
   Debian/Ubuntu: UID menor a 1000, o shell `nologin`/`false`) que tenga
   un proceso corriendo en este momento -- no una lista fija de nombres

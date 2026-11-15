@@ -7,6 +7,24 @@
   <p>{{ host.hostname }}{% if host.ip_address %} · {{ host.ip_address }}{% endif %}{% if host.os %} · {{ host.os }}{% endif %}</p>
 </div>
 
+{% if user.role == 'admin' %}
+<section class="panel" id="grant-access-panel" style="display:none; border: 1px solid var(--warn);">
+  <h2 style="color: var(--warn);">Dar acceso de lectura</h2>
+  <p>
+    Vas a darle a este agente permiso de lectura sobre <code id="grant-access-path"></code>
+    (via ACL -- no cambia duenos ni permisos existentes, no agrega escritura). Si es una carpeta,
+    aplica a todo lo que haya adentro, no solo a logs.
+  </p>
+  <p>Para confirmar, ingresa el codigo de tu app de autenticacion:</p>
+  <div style="display:flex; gap: var(--space-2); align-items:center; flex-wrap: wrap;">
+    <input type="text" id="grant-access-mfa" placeholder="Codigo de 6 digitos" style="width: 160px;" />
+    <button class="sm primary" id="confirm-grant-access-btn" type="button">Confirmar</button>
+    <button class="sm ghost" id="cancel-grant-access-btn" type="button">Cancelar</button>
+  </div>
+  <p class="login-error" id="grant-access-error"></p>
+</section>
+{% endif %}
+
 <section class="panel">
   <h2>Informe del sistema</h2>
   <div id="system-report-wrap">
@@ -269,12 +287,17 @@ function tagGroup(title, items, emptyText) {
   return `<div class="report-tag-group"><h4>${title}</h4>${body}</div>`;
 }
 
+const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
+
 // Solo se muestra si hay algo -- son avisos de "encontre esto pero no lo
 // puedo vigilar por permisos", no tiene sentido ocuparle lugar a la UI
 // cuando no hay nada de eso (el caso comun).
 function tagGroupWarnIfAny(title, items, hint) {
   if (!items || !items.length) return "";
-  const tags = items.map(i => `<span class="badge warn">${i}</span>`).join("");
+  const tags = items.map(i => {
+    const btn = isAdmin ? `<button class="sm ghost" data-grant-path="${i}">Dar acceso</button>` : "";
+    return `<span class="report-warn-row"><span class="badge warn">${i}</span>${btn}</span>`;
+  }).join("");
   return `<div class="report-tag-group"><h4>${title}</h4><div class="report-tags">${tags}</div>
     <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">${hint}</p></div>`;
 }
@@ -333,8 +356,64 @@ async function loadSystemReport() {
       ? `<div class="report-ai-summary">${data.ai_summary}</div>`
       : `<p style="color: var(--text-muted); font-size: var(--text-sm);">La IA todavia no genero el informe narrativo.</p>`}
   `;
+
+  if (isAdmin) wireGrantButtons();
 }
 loadSystemReport();
+
+let pendingGrantPath = null;
+
+function wireGrantButtons() {
+  document.querySelectorAll('[data-grant-path]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      pendingGrantPath = btn.dataset.grantPath;
+      document.getElementById('grant-access-path').textContent = pendingGrantPath;
+      document.getElementById('grant-access-mfa').value = '';
+      document.getElementById('grant-access-error').textContent = '';
+      document.getElementById('grant-access-panel').style.display = 'block';
+      document.getElementById('grant-access-panel').scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+}
+
+if (isAdmin) {
+  document.getElementById('cancel-grant-access-btn').addEventListener('click', () => {
+    document.getElementById('grant-access-panel').style.display = 'none';
+    pendingGrantPath = null;
+  });
+
+  document.getElementById('confirm-grant-access-btn').addEventListener('click', async () => {
+    const code = document.getElementById('grant-access-mfa').value.trim();
+    const errorEl = document.getElementById('grant-access-error');
+    errorEl.textContent = '';
+
+    if (!code) {
+      errorEl.textContent = 'Ingresa el codigo de tu app de autenticacion.';
+      return;
+    }
+
+    const res = await fetch(`/api/v1/hosts/{{ host.id }}/grant-log-access`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mfa_code: code, path: pendingGrantPath }),
+    });
+
+    if (res.status === 401) {
+      errorEl.textContent = 'Codigo MFA invalido.';
+      return;
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      errorEl.textContent = data.detail || 'No se pudo encolar el pedido.';
+      return;
+    }
+
+    document.getElementById('grant-access-panel').style.display = 'none';
+    toast('Encolado. El agente lo aplica en su proximo ciclo (hasta unos segundos) y reenvia el informe solo.', 'success');
+    pendingGrantPath = null;
+    setTimeout(loadSystemReport, 20000);
+  });
+}
 
 document.getElementById('ask-form').addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -57,11 +57,13 @@ fi
 # "sudo" se incluye a proposito: en hosts tipo hipervisor (Proxmox VE y
 # similares, donde todo se maneja como root directamente) suele no venir
 # instalado, y sin el no existe "visudo" (lo necesitamos mas abajo para
-# validar el sudoers acotado del agente) ni funciona el bloqueo/kill
-# aprobado desde el dashboard (commands.py invoca "sudo" en tiempo real).
-echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban)..."
+# validar el sudoers acotado del agente) ni funciona el bloqueo/kill/
+# otorgamiento de acceso a logs aprobado desde el dashboard (commands.py
+# invoca "sudo" en tiempo real). "acl" trae setfacl, que usa
+# grant_log_access.sh para dar lectura puntual sin tocar duenos/permisos.
+echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl)..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip sudo fail2ban
+apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
 
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
@@ -84,6 +86,7 @@ emit_file "metrics.py"           '$INSTALL_DIR/metrics.py'
 emit_file "process_watch.py"     '$INSTALL_DIR/process_watch.py'
 emit_file "requirements.txt"     '$INSTALL_DIR/requirements.txt'
 emit_file "kill_process.sh"      '$INSTALL_DIR/kill_process.sh' 755
+emit_file "grant_log_access.sh"  '$INSTALL_DIR/grant_log_access.sh' 755
 
 cat >> "$OUT" <<'MID_EOF'
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then

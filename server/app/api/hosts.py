@@ -13,7 +13,7 @@ from app.models.security import BlockedIP, Command, IngestedRequest, SecurityEve
 from app.models.system_report import SystemReport
 from app.models.user import User
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
-from app.schemas.host import HostCreate, HostCreated, HostDeleteRequest, HostOut
+from app.schemas.host import GrantLogAccessRequest, HostCreate, HostCreated, HostDeleteRequest, HostOut
 from app.services import auth, geoip
 
 router = APIRouter(prefix="/api/v1/hosts", tags=["hosts"])
@@ -98,6 +98,46 @@ async def delete_host(
     await db.delete(host)
     await db.commit()
     return {"status": "ok"}
+
+
+@router.post("/{host_id}/grant-log-access")
+async def grant_log_access(
+    host_id: str,
+    payload: GrantLogAccessRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Encola en el agente un otorgamiento de permiso de lectura (ACL,
+    nunca cambia duenos ni permisos existentes) sobre una carpeta/archivo
+    que el propio descubrimiento del host marco como no accesible. Pide
+    MFA como paso extra: es una escalada de privilegios real del agente
+    sobre el filesystem del host, aunque acotada (ver
+    agent/grant_log_access.sh) -- nunca sobre /root, y solo sobre lo que
+    el ultimo informe de este host efectivamente reporto como bloqueado,
+    no cualquier ruta arbitraria."""
+    host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host no encontrado")
+
+    if not auth.verify_totp(admin.mfa_secret, payload.mfa_code):
+        raise HTTPException(status_code=401, detail="Codigo MFA invalido")
+
+    report = (
+        await db.execute(select(SystemReport).where(SystemReport.host_id == host.id))
+    ).scalar_one_or_none()
+    raw = report.raw if report else {}
+    known_paths = set(raw.get("unreadable_log_paths") or []) | set(raw.get("denied_log_dirs") or [])
+    if payload.path not in known_paths:
+        raise HTTPException(
+            status_code=400,
+            detail="Esa ruta no figura en el ultimo informe de este host como bloqueada",
+        )
+
+    command = Command(host_id=host.id, action="grant_log_access", payload={"path": payload.path})
+    db.add(command)
+    await db.commit()
+    await db.refresh(command)
+    return {"status": "ok", "command_id": str(command.id)}
 
 
 @router.get("/{host_id}/system-report", dependencies=[Depends(get_current_user)])

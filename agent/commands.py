@@ -1,7 +1,8 @@
 """Ejecuta comandos aprobados por el administrador desde el panel
-(bloquear IP via fail2ban, terminar un proceso) usando los permisos
-acotados definidos en sudoers/prox-secure-agent. El agente en si corre
-sin privilegios; solo esas dos acciones puntuales usan sudo.
+(bloquear IP via fail2ban, terminar un proceso, dar acceso de lectura a
+un log bloqueado) usando los permisos acotados definidos en
+sudoers/prox-secure-agent. El agente en si corre sin privilegios; solo
+esas acciones puntuales usan sudo.
 """
 
 import logging
@@ -9,6 +10,8 @@ import os
 import subprocess
 
 import httpx
+
+import discovery
 
 logger = logging.getLogger("commands")
 
@@ -38,6 +41,9 @@ def execute(command: dict, fail2ban_jail: str) -> tuple[bool, str]:
         expected = (payload.get("cmdline") or "")[:80]
         return _run(["sudo", f"{AGENT_DIR}/kill_process.sh", str(payload["pid"]), expected])
 
+    if action == "grant_log_access":
+        return _run(["sudo", f"{AGENT_DIR}/grant_log_access.sh", payload["path"]])
+
     return False, f"accion desconocida: {action}"
 
 
@@ -46,6 +52,7 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
     resp.raise_for_status()
     commands = resp.json()
 
+    granted_access = False
     for command in commands:
         ok, output = execute(command, fail2ban_jail)
         logger.info("Comando %s (%s): %s -> %s", command["id"], command["action"], ok, output)
@@ -54,3 +61,17 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
             headers=headers,
             json={"status": "done" if ok else "failed", "result": output},
         )
+        if command["action"] == "grant_log_access" and ok:
+            granted_access = True
+
+    if granted_access:
+        # Releer el sistema ahora, no esperar al proximo ciclo diario de
+        # discovery -- el admin acaba de dar un permiso especificamente
+        # para que esto se vea reflejado.
+        try:
+            report = discovery.full_report()
+            resp = await client.post(f"{base_url}/api/v1/system-report/ingest", json=report, headers=headers)
+            resp.raise_for_status()
+            logger.info("Informe de sistema reenviado tras otorgar acceso de lectura")
+        except Exception:
+            logger.exception("Fallo reenviando el informe de sistema tras otorgar acceso")

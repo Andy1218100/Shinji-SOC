@@ -69,6 +69,20 @@ executes admin-approved actions through narrowly scoped sudo rules
     excluded.
   A manual override in the agent's `config.yaml` still wins if set, for
   non-standard setups.
+- Grant log access (resolved 2026-11-15): discovery finds files/folders it
+  can't read (closed-permission home dirs are the common case — a game
+  server panel's own data directory, say) and lists them on the host's
+  page instead of failing silently. An admin can click "Dar acceso" on any
+  of those, confirm with their MFA code, and the agent grants itself
+  read-only access via a `sudo`-invoked, narrowly-scoped script
+  (`setfacl`, additive — never touches existing owners/permission bits,
+  never grants write/exec). Hard-scoped on both ends: the server only
+  accepts a path the host's own last report actually listed as blocked,
+  and the agent script only accepts `/var/log`, `/opt`, `/srv`, `/home` —
+  `/root` is refused unconditionally, even via a direct API call. On
+  success the agent immediately re-sends a fresh discovery report instead
+  of waiting for the next daily cycle, so the newly-readable log shows up
+  within seconds.
 - Metrics (detailed 2026-11-14): per host, not just totals — CPU broken
   into user/system/iowait/steal, memory into used/buffers/cached/shared/
   available, swap, network throughput (not just cumulative counters), disk

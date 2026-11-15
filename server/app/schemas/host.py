@@ -32,3 +32,8 @@ class HostCreated(HostOut):
 
 class HostDeleteRequest(BaseModel):
     mfa_code: str
+
+
+class GrantLogAccessRequest(BaseModel):
+    mfa_code: str
+    path: str
