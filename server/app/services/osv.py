@@ -8,23 +8,36 @@ redacta la recomendacion a partir de lo que OSV devuelve.
 import httpx
 
 OSV_API = "https://api.osv.dev/v1"
+# Mas de 1000 por request -> 400 "too many queries" (medido contra la API
+# real; un host Proxmox tipico ya tiene ~1500 paquetes).
+BATCH_MAX = 1000
 
 
 async def query_batch(packages: list[tuple[str, str]], ecosystem: str = "Debian") -> list[list[str]]:
     """Para cada (nombre, version), devuelve la lista de IDs de
     vulnerabilidad (CVE/GHSA/DSA) que OSV conoce para esa version."""
 
-    if not packages:
-        return []
-
     queries = [{"package": {"name": name, "ecosystem": ecosystem}, "version": version} for name, version in packages]
+    found: list[list[str]] = [[] for _ in queries]
 
     async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(f"{OSV_API}/querybatch", json={"queries": queries})
-        resp.raise_for_status()
-        results = resp.json().get("results", [])
+        for start in range(0, len(queries), BATCH_MAX):
+            # indice global -> query; se achica a las que devolvieron
+            # next_page_token (paginacion por query, ver docs de querybatch).
+            pending = {start + i: q for i, q in enumerate(queries[start:start + BATCH_MAX])}
+            while pending:
+                idxs = list(pending)
+                resp = await client.post(f"{OSV_API}/querybatch", json={"queries": [pending[i] for i in idxs]})
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+                next_pending = {}
+                for idx, r in zip(idxs, results):
+                    found[idx].extend(v["id"] for v in (r.get("vulns") or []))
+                    if r.get("next_page_token"):
+                        next_pending[idx] = {**queries[idx], "page_token": r["next_page_token"]}
+                pending = next_pending
 
-    return [[v["id"] for v in (r.get("vulns") or [])] for r in results]
+    return found
 
 
 async def get_vuln(vuln_id: str) -> dict:
