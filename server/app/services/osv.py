@@ -54,9 +54,13 @@ def extract_severity(vuln: dict) -> str:
     return "warning"
 
 
-def extract_fixed_version(vuln: dict, package_name: str) -> str | None:
+def extract_fixed_version(vuln: dict, package_name: str, ecosystem: str) -> str | None:
+    # Un mismo advisory trae un bloque "affected" por release (Debian:12,
+    # Debian:13, ...) con su propio fix; el de otra release no sirve y puede
+    # existir aunque la del host todavia no tenga parche.
     for affected in vuln.get("affected", []):
-        if affected.get("package", {}).get("name") != package_name:
+        pkg = affected.get("package", {})
+        if pkg.get("name") != package_name or pkg.get("ecosystem") != ecosystem:
             continue
         for rng in affected.get("ranges", []):
             for event in rng.get("events", []):

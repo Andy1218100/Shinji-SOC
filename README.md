@@ -28,11 +28,14 @@ administrador aprueba cada accion desde `/security` y ahi se ejecuta.
 **Vulnerabilidades de software**: el agente reporta una vez al dia el
 inventario de paquetes instalados (`dpkg`). El servidor lo cruza contra
 [OSV.dev](https://osv.dev) (base de datos de CVEs real, gratis, sin
-cuenta) y, por cada vulnerabilidad real que encuentra, pide a la IA una
-recomendacion de 2-3 frases (que version instalar, o como mitigar si
-todavia no hay parche) **a partir de los datos que ya trajo de OSV** --
-la IA nunca decide por su cuenta si algo es vulnerable. Se ve en
-`/vulnerabilities`.
+cuenta) y, por cada paquete afectado, pide a la IA una recomendacion de
+2-3 frases (actualizar, o como mitigar si todavia no hay parche) **a
+partir de los datos que ya trajo de OSV** -- la IA nunca decide por su
+cuenta si algo es vulnerable. Es una recomendacion por paquete, no por
+CVE: en un host real habia 716 CVEs en 97 paquetes (108 solo en
+`imagemagick`), y con un modelo chico en CPU (~20s por respuesta) una
+por CVE eran horas. Se ve en `/vulnerabilities`, una fila por paquete
+con sus CVEs desplegables.
 
 **Acceso**: cuentas individuales (usuario + contrasena + MFA por TOTP),
 con rol admin o solo lectura. Nada de clave compartida. Gestion de
@@ -382,9 +385,18 @@ curl -b cookies.txt -X POST http://localhost:8000/api/v1/vulnerabilities/FINDING
 El agente manda el inventario de paquetes cada `inventory_interval_seconds`
 (1 dia por defecto, `agent/config.example.yaml`). El servidor escanea
 todos los hosts cada `VULN_SCAN_INTERVAL_SECONDS` (tambien 1 dia) contra
-OSV.dev. El primer escaneo util necesita que el agente ya haya mandado
-al menos un inventario -- no hay nada que ver en `/vulnerabilities`
-hasta entonces.
+OSV.dev, y una vez al arrancar el servidor (para forzar un escaneo:
+`docker compose restart server`). El primer escaneo util necesita que el
+agente ya haya mandado al menos un inventario -- no hay nada que ver en
+`/vulnerabilities` hasta entonces.
+
+Un CVE que OSV deja de reportar para la version instalada (porque se
+actualizo o desinstalo el paquete) pasa solo a `resolved` en el
+siguiente escaneo; si vuelve a aparecer, vuelve a `open`. La "version
+corregida" es la de la release Debian del host (OSV publica un fix
+distinto por release: el de Debian 12 no sirve en un Debian 13). Los
+paquetes de repos de terceros (`pve-*`/`proxmox-*` en Proxmox, por
+ejemplo) no estan en el ecosistema Debian de OSV y no se revisan.
 
 ## IA: Ollama local vs Claude
 

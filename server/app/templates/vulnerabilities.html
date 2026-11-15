@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Vulnerabilidades</h1>
-  <p>Software instalado cruzado contra OSV.dev (CVEs reales), con recomendacion de la IA. Se revisa una vez al dia.</p>
+  <p>Software instalado cruzado contra OSV.dev (CVEs reales), con una recomendacion de la IA por paquete. Se revisa una vez al dia.</p>
   <p style="font-size: var(--text-xs); color: var(--text-muted);">
     "Version corregida" es el dato real de OSV.dev. La recomendacion de la IA es prosa generada por un modelo chico: puede equivocarse en un numero; si no coinciden, confia en "Version corregida".
   </p>
@@ -35,6 +35,13 @@
 <script>
 const severityClass = { critical: 'crit', warning: 'warn' };
 let hostNames = {};
+// Sobrevive al refresco automatico de 30s, que redibuja la tabla.
+const expandedGroups = new Set();
+
+// Resumenes de OSV y texto de la IA: no se insertan como HTML crudo.
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 function formatDate(iso) {
   if (!iso) return 'nunca';
@@ -96,45 +103,92 @@ async function loadVulnerabilities() {
     return;
   }
 
-  if (findings.length === 0) {
+  const resolvedCount = findings.filter(f => f.status === 'resolved').length;
+  const active = findings.filter(f => f.status !== 'resolved');
+  const resolvedNote = resolvedCount
+    ? `<p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">${resolvedCount} resueltas (el paquete se actualizo o desinstalo y OSV ya no las reporta para la version instalada).</p>`
+    : '';
+
+  if (active.length === 0) {
     wrap.innerHTML = `
       <div class="empty-state">
-        <p>Sin vulnerabilidades conocidas todavia. El primer escaneo corre poco despues de que un host reporte su inventario, y despues una vez al dia.</p>
-      </div>`;
+        <p>Sin vulnerabilidades abiertas. El primer escaneo corre al arrancar el servidor y despues una vez al dia.</p>
+      </div>${resolvedNote}`;
     return;
   }
 
-  const rows = findings.map(f => {
-    const sev = severityClass[f.severity] || 'warn';
-    const canAct = f.status === 'open';
-    const action = canAct
-      ? `<button class="sm ghost" data-ack="${f.id}">Reconocer</button>`
-      : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${f.status}</span>`;
+  // Una fila por paquete: la recomendacion de la IA es una sola por paquete.
+  const groups = new Map();
+  for (const f of active) {
+    const key = `${f.host_id}|${f.package_name}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+  const sorted = [...groups.entries()].sort(([, a], [, b]) => {
+    const crit = (g) => g.filter(f => f.severity === 'critical').length;
+    return crit(b) - crit(a) || b.length - a.length;
+  });
+
+  const rows = sorted.map(([key, items]) => {
+    const first = items[0];
+    const crit = items.filter(f => f.severity === 'critical').length;
+    const open = items.filter(f => f.status === 'open').length;
+    const rec = items.find(f => f.ai_recommendation)?.ai_recommendation;
+    const fixed = [...new Set(items.map(f => f.fixed_version).filter(Boolean))];
+    const fixedText = fixed.length ? esc(fixed.slice(0, 2).join(', ')) + (fixed.length > 2 ? ` (+${fixed.length - 2})` : '') : '-';
+    const isOpen = expandedGroups.has(key);
+
+    const cveRows = items.map(f => {
+      const action = f.status === 'open'
+        ? `<button class="sm ghost" data-ack="${f.id}">Reconocer</button>`
+        : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${f.status}</span>`;
+      return `
+        <tr class="vuln-cve-row" data-group="${esc(key)}" ${isOpen ? '' : 'hidden'}>
+          <td></td>
+          <td><a href="${esc(f.source_url || '#')}" target="_blank" rel="noopener">${esc(f.vuln_id)}</a></td>
+          <td><span class="badge ${severityClass[f.severity] || 'warn'}">${esc(f.severity)}</span></td>
+          <td style="color: var(--text-secondary);">${esc(f.summary || 'sin resumen')}</td>
+          <td>${esc(f.fixed_version || '-')}</td>
+          <td>${action}</td>
+        </tr>`;
+    }).join('');
 
     return `
       <tr>
-        <td>${hostNames[f.host_id] || f.host_id}</td>
-        <td>${f.package_name} <span style="color:var(--text-muted)">${f.package_version}</span></td>
-        <td><a href="${f.source_url || '#'}" target="_blank" rel="noopener">${f.vuln_id}</a></td>
-        <td><span class="badge ${sev}">${f.severity}</span></td>
-        <td>${f.ai_recommendation || f.summary || '<span style="color:var(--text-muted)">sin resumen</span>'}</td>
-        <td>${f.fixed_version || '-'}</td>
-        <td>${action}</td>
-      </tr>`;
+        <td>${esc(hostNames[first.host_id] || first.host_id)}</td>
+        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span></td>
+        <td>
+          <div>${items.length} CVE${items.length === 1 ? '' : 's'}${crit ? ` · <span class="badge crit">${crit} criticas</span>` : ''}</div>
+          <div style="color: var(--text-muted); font-size: var(--text-xs);">${open} sin reconocer</div>
+          <button class="sm ghost" data-toggle-group="${esc(key)}">${isOpen ? 'Ocultar CVEs' : 'Ver CVEs'}</button>
+        </td>
+        <td>${rec ? esc(rec) : '<span style="color:var(--text-muted)">(pendiente)</span>'}</td>
+        <td>${fixedText}</td>
+        <td></td>
+      </tr>${cveRows}`;
   }).join('');
 
   wrap.innerHTML = `
     <table class="data vulns-table">
       <colgroup>
-        <col style="width:11%"><col style="width:16%"><col style="width:11%">
-        <col style="width:8%"><col style="width:38%"><col style="width:9%"><col style="width:7%">
+        <col style="width:11%"><col style="width:17%"><col style="width:14%">
+        <col style="width:39%"><col style="width:12%"><col style="width:7%">
       </colgroup>
-      <thead><tr><th>Host</th><th>Paquete</th><th>Vulnerabilidad</th><th>Severidad</th><th>Recomendacion</th><th>Version corregida</th><th></th></tr></thead>
+      <thead><tr><th>Host</th><th>Paquete</th><th>Vulnerabilidades</th><th>Recomendacion</th><th>Version corregida</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
-    </table>`;
+    </table>${resolvedNote}`;
 
   wrap.querySelectorAll('[data-ack]').forEach(btn => {
     btn.addEventListener('click', () => acknowledge(btn.dataset.ack));
+  });
+  wrap.querySelectorAll('[data-toggle-group]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.toggleGroup;
+      const show = !expandedGroups.has(key);
+      show ? expandedGroups.add(key) : expandedGroups.delete(key);
+      wrap.querySelectorAll('.vuln-cve-row').forEach(r => { if (r.dataset.group === key) r.hidden = !show; });
+      btn.textContent = show ? 'Ocultar CVEs' : 'Ver CVEs';
+    });
   });
 }
 
