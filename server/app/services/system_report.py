@@ -11,6 +11,20 @@ from app.services import ai
 logger = logging.getLogger("system_report")
 
 
+def _join_capped(items: list[str], limit: int, empty: str) -> str:
+    """Corta listas largas antes de mandarlas a la IA. Un host real puede
+    tener decenas de logs (ej. debug logs de ifupdown2 con timestamp en el
+    nombre, uno por cada vez que cambio la red) -- meter los 40 enteros en
+    el prompt no le suma nada util al resumen y en la practica hizo que el
+    modelo chico (qwen2.5:3b en CPU) tardara mas de los 120s de timeout,
+    dejando el intento de resumen simplemente fallido."""
+    if not items:
+        return empty
+    shown = ", ".join(items[:limit])
+    extra = len(items) - limit
+    return f"{shown} (y {extra} mas)" if extra > 0 else shown
+
+
 def _build_prompt(host: Host, payload: SystemReportIn) -> str:
     lines = [
         f"Host: {host.name} ({host.hostname}).",
@@ -26,20 +40,18 @@ def _build_prompt(host: Host, payload: SystemReportIn) -> str:
         )
     lines.append(
         "Servicios detectados corriendo: "
-        + (", ".join(payload.services) if payload.services else "ninguno reconocido") + "."
+        + _join_capped(payload.services, 15, "ninguno reconocido") + "."
     )
     if payload.listening_ports:
-        ports = ", ".join(
-            f"{p.port}" + (f" ({p.process})" if p.process else "") for p in payload.listening_ports
-        )
-        lines.append(f"Puertos en escucha: {ports}.")
+        ports = [f"{p.port}" + (f" ({p.process})" if p.process else "") for p in payload.listening_ports]
+        lines.append(f"Puertos en escucha ({len(ports)} en total): {_join_capped(ports, 20, '')}.")
     lines.append(
-        "Logs de acceso que el agente va a vigilar: "
-        + (", ".join(payload.log_paths) if payload.log_paths else "ninguno encontrado") + "."
+        f"Logs que el agente va a vigilar ({len(payload.log_paths)} en total): "
+        + _join_capped(payload.log_paths, 10, "ninguno encontrado") + "."
     )
     lines.append(
         "Cuentas de servicio que el agente va a vigilar por posible webshell/RCE: "
-        + (", ".join(payload.service_accounts) if payload.service_accounts else "ninguna encontrada") + "."
+        + _join_capped(payload.service_accounts, 15, "ninguna encontrada") + "."
     )
 
     return (
@@ -67,7 +79,11 @@ async def save_and_summarize(db: AsyncSession, host: Host, payload: SystemReport
     try:
         report.ai_summary = await ai.ask(_build_prompt(host, payload))
     except Exception:
+        # No dejar el resumen de un escaneo anterior mostrado como si fuera
+        # vigente -- mejor mostrar "no se pudo generar" (ver host.html) que
+        # un texto desactualizado y potencialmente ya incorrecto.
         logger.exception("No se pudo generar el informe de IA para %s", host.name)
+        report.ai_summary = None
     await db.commit()
 
     return report
