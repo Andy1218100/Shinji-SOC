@@ -223,12 +223,18 @@ cd /tmp/prox-secure-agent
 sudo ./install.sh http://TU_SERVIDOR:8000 LA_API_KEY_DEL_HOST
 ```
 
-Esto crea un usuario de sistema sin privilegios (en el grupo `adm`, para
-poder leer logs del sistema), instala fail2ban, un virtualenv, el
-sudoers acotado (`/etc/sudoers.d/prox-secure-agent`, solo permite
+El script se vale solo: instala `python3`/`python3-venv`/`python3-pip` y
+`fail2ban` via `apt` si no estan (no hace falta preparar nada a mano en
+el servidor), crea un usuario de sistema sin privilegios (en el grupo
+`adm`, para poder leer logs del sistema), arma el virtualenv con las
+dependencias del agente, el sudoers acotado
+(`/etc/sudoers.d/prox-secure-agent`, solo permite
 `fail2ban-client set * banip/unbanip *` y el wrapper `kill_process.sh`)
 y un servicio systemd (`prox-secure-agent`) con el agente completo
 (descubrimiento + metricas + logs + procesos + inventario + comandos).
+Necesita ejecutarse con `bash` (`sudo ./install.sh ...` o
+`sudo bash install.sh ...`), no con `sh`/`dash` -- usa `$EUID`, que esos
+shells no soportan.
 
 ### Descubrimiento automatico (personalizado por host)
 

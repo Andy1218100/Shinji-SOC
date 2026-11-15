@@ -13,10 +13,13 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if ! command -v fail2ban-client &>/dev/null; then
-  echo "Instalando fail2ban..."
-  apt-get update -y && apt-get install -y fail2ban
-fi
+# Dependencias del sistema. Se instalan siempre (apt no reinstala lo que
+# ya esta, es rapido) en vez de detectar que falta uno por uno -- asi se
+# evita el problema clasico de Debian donde python3 esta pero el modulo
+# venv/pip no, porque van en paquetes separados (python3-venv, python3-pip).
+echo "Instalando dependencias del sistema (python3, venv, pip, fail2ban)..."
+apt-get update -y
+apt-get install -y python3 python3-venv python3-pip fail2ban
 
 id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
