@@ -22,6 +22,19 @@ SUSPICIOUS_BINARIES = {
     "telnet",
 }
 
+# Scripts de sistema que corren legitimamente con un interprete de la lista
+# de arriba bajo una cuenta de servicio. Coincidencia EXACTA de interprete +
+# opciones + ruta del script, no "el script aparece en algun argumento":
+# "perl -e CODIGO /usr/bin/pg_ctlcluster" corre CODIGO (con -e perl no busca
+# archivo). Las opciones deben incluir -T: en modo taint perl ignora
+# PERL5OPT/PERL5LIB/PERLLIB, asi que no se puede inyectar codigo por el
+# entorno a un script permitido. Rutas en /usr/bin: la cuenta de servicio
+# no puede reemplazarlas.
+TRUSTED_SCRIPTS = {
+    # systemd arranca/para PostgreSQL de Debian asi (postgresql@.service).
+    ("perl", ("-wT",), "/usr/bin/pg_ctlcluster"),
+}
+
 _reported_pids: set[int] = set()
 
 
@@ -29,6 +42,14 @@ def _basename(cmdline: list[str]) -> str | None:
     if not cmdline:
         return None
     return os.path.basename(cmdline[0]).lower()
+
+
+def _is_trusted_script(binary: str, cmdline: list[str]) -> bool:
+    for interpreter, flags, script in TRUSTED_SCRIPTS:
+        n = len(flags)
+        if binary == interpreter and tuple(cmdline[1:1 + n]) == flags and cmdline[1 + n:2 + n] == [script]:
+            return True
+    return False
 
 
 def scan(service_users: list[str]) -> list[dict]:
@@ -50,6 +71,8 @@ def scan(service_users: list[str]) -> list[dict]:
 
             binary = _basename(info["cmdline"])
             if binary not in SUSPICIOUS_BINARIES or pid in _reported_pids:
+                continue
+            if _is_trusted_script(binary, info["cmdline"]):
                 continue
 
             parent_cmdline = None
