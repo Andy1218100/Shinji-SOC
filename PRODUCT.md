@@ -50,15 +50,25 @@ executes admin-approved actions through narrowly scoped sudo rules
 
 ## Capabilities and Constraints
 
-- System discovery (resolved 2026-11-14): the first thing the agent does on
-  a new host, before any ongoing monitoring, is fingerprint the system — OS,
-  kernel, hardware, running services, listening ports — and report it. The
-  server turns that into a plain-language report via the local AI, shown on
-  the host's page. The same discovery data is what the agent uses to decide,
-  per host, which web server log to tail and which service accounts to
-  watch for process anomalies — no more hand-editing `log_paths`/
-  `service_users` identically for every machine. A manual override in the
-  agent's `config.yaml` still wins if set, for non-standard setups.
+- System discovery (resolved 2026-11-14, broadened 2026-11-15): the first
+  thing the agent does on a new host, before any ongoing monitoring, is
+  fingerprint the system — OS, kernel, hardware, running services, listening
+  ports — and report it. The server turns that into a plain-language report
+  via the local AI, shown on the host's page. The same discovery data is
+  what the agent uses to decide, per host, what to watch for process
+  anomalies and what logs to tail — no more hand-editing `log_paths`/
+  `service_users` identically for every machine:
+  - Logs: known nginx/apache paths, plus a bounded filesystem scan
+    (`/var/log`, `/opt`, `/srv`, `/home`, `/root`) for anything named
+    `*.log`/`*.logs` or living under a `log`/`logs` directory — catches
+    non-standard app logs (game server panels, home-grown apps) that
+    nginx/apache-only detection missed.
+  - Service accounts: any system account (Debian/Ubuntu convention: UID
+    under 1000, or a `nologin`/`false` shell) currently running a process,
+    not a fixed name list — `root` and the agent's own account are
+    excluded.
+  A manual override in the agent's `config.yaml` still wins if set, for
+  non-standard setups.
 - Metrics (detailed 2026-11-14): per host, not just totals — CPU broken
   into user/system/iowait/steal, memory into used/buffers/cached/shared/
   available, swap, network throughput (not just cumulative counters), disk

@@ -258,15 +258,32 @@ cd agent && bash _build_install.sh
 Lo primero que hace el agente al arrancar es describir el sistema:
 sistema operativo, hardware, servicios corriendo (nginx, postgres,
 redis, etc.), puertos en escucha, y a partir de eso **detecta solo**
-que logs de servidor web y que cuentas de servicio tiene sentido vigilar
-*en ese host en particular* -- no hace falta editar `log_paths` ni
+que logs y que cuentas de servicio tiene sentido vigilar *en ese host
+en particular* -- no hace falta editar `log_paths` ni
 `process_watch.service_users` a mano para cada maquina. El servidor
 arma ademas un informe en lenguaje natural con la IA local, visible en
 la pagina del host (`/hosts/<id>`).
 
-Si un setup no es estandar (logs en otro lado, otra cuenta de servicio),
-se puede seguir fijando `log_paths`/`process_watch.service_users` a mano
-en `/opt/prox-secure-agent/config.yaml` (ver `agent/config.example.yaml`)
+- **Logs**: ademas de los paths fijos conocidos de nginx/apache, el
+  agente busca cualquier archivo cuyo nombre tenga `.log`/`.logs`, o que
+  viva dentro de una carpeta llamada `log`/`logs`, en `/var/log`, `/opt`,
+  `/srv`, `/home` y `/root` (nunca en toda la raiz del sistema). Esto
+  encuentra logs de aplicaciones no estandar (paneles como AMP, apps
+  caseras, etc.) ademas de los de nginx/apache. Que un archivo aparezca
+  ahi no significa que el IDS vaya a sacarle algo util -- las lineas que
+  no tengan formato "combined" de acceso HTTP se ignoran solas, sin
+  error, asi que el costo de vigilar uno que no sirve es nomas un poco
+  de I/O de mas.
+- **Cuentas de servicio**: cualquier cuenta de sistema (por convencion
+  Debian/Ubuntu: UID menor a 1000, o shell `nologin`/`false`) que tenga
+  un proceso corriendo en este momento -- no una lista fija de nombres
+  conocidos. Se excluyen `root` (ejecutar lo que sea no es una anomalia
+  para el superusuario) y la propia cuenta del agente.
+
+Si un setup no es estandar (logs en otro lado que el autodescubrimiento
+no encontro, o una cuenta que no cumple esas condiciones), se puede
+seguir fijando `log_paths`/`process_watch.service_users` a mano en
+`/opt/prox-secure-agent/config.yaml` (ver `agent/config.example.yaml`)
 -- lo que se defina ahi gana siempre sobre lo autodetectado. Despues de
 cualquier cambio: `systemctl restart prox-secure-agent`.
 

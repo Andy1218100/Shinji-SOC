@@ -12,6 +12,7 @@ fallar -- el resto del agente ya esta hecho para degradar con gracia.
 import logging
 import os
 import platform
+import pwd
 
 import psutil
 
@@ -42,9 +43,26 @@ WEB_SERVER_LOG_CANDIDATES = {
     "httpd": ["/var/log/httpd/access_log"],
 }
 
-# cuentas de servicio candidatas: solo se reportan las que de verdad
-# tienen un proceso corriendo con ese usuario en este host.
-SERVICE_ACCOUNT_CANDIDATES = ("www-data", "nginx", "apache", "postgres", "mysql", "redis", "mongodb")
+# Cuentas que NO se vigilan aunque cumplan "cuenta de sistema con proceso
+# activo": el usuario del propio agente (para no terminar vigilandose a
+# si mismo -- cada comando aprobado se ejecuta via "sudo ...", que es
+# justo el patron que busca process_watch.py) y root (root ejecutando lo
+# que sea no es una anomalia, es el superusuario).
+WATCH_EXCLUDED_USERS = {"root", "prox-secure"}
+NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", ""}
+SYSTEM_UID_MAX = 999  # convencion Debian/Ubuntu: UIDs de cuentas de sistema son < 1000
+
+# Busqueda de logs mas alla de nginx/apache: cualquier archivo cuyo
+# nombre tenga ".log"/".logs", o que viva dentro de una carpeta llamada
+# justo "log"/"logs", buscando solo en las rutas donde de verdad suele
+# haber logs de aplicaciones (nunca toda la raiz "/": ahi estan /proc,
+# /sys y montajes que no tiene sentido recorrer y pueden ser enormes).
+LOG_SCAN_ROOTS = ("/var/log", "/opt", "/srv", "/home", "/root")
+LOG_FILENAME_MARKERS = (".log", ".logs")
+LOG_DIRNAME_MARKERS = ("log", "logs")
+LOG_SCAN_MAX_DEPTH = 6
+LOG_SCAN_MAX_DIRS = 2000  # tope de directorios visitados, para no colgarse en arboles enormes
+LOG_SCAN_MAX_RESULTS = 40
 
 
 def detect_os() -> dict:
@@ -115,16 +133,79 @@ def detect_listening_ports() -> list[dict]:
     return sorted(ports, key=lambda p: p["port"])
 
 
+def _looks_like_log(filename: str) -> bool:
+    lowered = filename.lower()
+    return any(marker in lowered for marker in LOG_FILENAME_MARKERS)
+
+
+def _scan_for_log_files() -> list[str]:
+    """Busqueda acotada (no toda la raiz, con tope de carpetas y resultados)
+    de cualquier archivo que parezca un log, mas alla de los paths fijos de
+    nginx/apache. Que un archivo aparezca aca no garantiza que sea un log
+    de acceso HTTP util para el IDS -- el parser de logs ya ignora en
+    silencio cualquier linea que no tenga el formato esperado, asi que el
+    costo de vigilar uno que no sirve es nomas un poco de I/O, nunca un
+    error. Se prioriza mostrar todo lo que puede ser relevante (lo pidio
+    el usuario explicitamente) por sobre ser quirurgico."""
+    found: set[str] = set()
+    visited_dirs = 0
+
+    for root in LOG_SCAN_ROOTS:
+        if len(found) >= LOG_SCAN_MAX_RESULTS or visited_dirs >= LOG_SCAN_MAX_DIRS:
+            break
+        if not os.path.isdir(root):
+            continue
+
+        base_depth = root.rstrip(os.sep).count(os.sep)
+        try:
+            walker = os.walk(root, onerror=lambda e: None)
+            for dirpath, dirnames, filenames in walker:
+                visited_dirs += 1
+                depth = dirpath.rstrip(os.sep).count(os.sep) - base_depth
+
+                if visited_dirs >= LOG_SCAN_MAX_DIRS or len(found) >= LOG_SCAN_MAX_RESULTS:
+                    dirnames[:] = []
+                    break
+                if depth >= LOG_SCAN_MAX_DEPTH:
+                    dirnames[:] = []  # no seguir bajando en este subarbol
+
+                in_log_dir = os.path.basename(dirpath).lower() in LOG_DIRNAME_MARKERS
+                for filename in filenames:
+                    if len(found) >= LOG_SCAN_MAX_RESULTS:
+                        break
+                    if not (_looks_like_log(filename) or in_log_dir):
+                        continue
+                    full_path = os.path.join(dirpath, filename)
+                    if os.path.isfile(full_path) and not os.path.islink(full_path):
+                        found.add(full_path)
+        except Exception:
+            logger.exception("Fallo buscando logs en %s", root)
+
+    return sorted(found)
+
+
 def detect_log_paths() -> list[str]:
-    paths = []
+    paths: set[str] = set()
     for candidates in WEB_SERVER_LOG_CANDIDATES.values():
         for path in candidates:
             if os.path.exists(path):
-                paths.append(path)
-    return paths
+                paths.add(path)
+    paths.update(_scan_for_log_files())
+    return sorted(paths)
+
+
+def _is_system_account(entry: pwd.struct_passwd) -> bool:
+    if entry.pw_name in WATCH_EXCLUDED_USERS:
+        return False
+    return entry.pw_shell in NOLOGIN_SHELLS or entry.pw_uid < SYSTEM_UID_MAX
 
 
 def detect_service_accounts() -> list[str]:
+    """Cualquier cuenta de sistema (no de login humano, por shell o por
+    rango de UID -- convencion estandar de Debian/Ubuntu) que tenga un
+    proceso activo en este momento, no solo una lista fija conocida. Que
+    tenga un proceso corriendo ahora es lo que evita vigilar las decenas
+    de cuentas de sistema que Debian crea pero nunca usa."""
     running_users: set[str] = set()
     try:
         for proc in psutil.process_iter(["username"]):
@@ -133,7 +214,16 @@ def detect_service_accounts() -> list[str]:
                 running_users.add(username)
     except Exception:
         logger.exception("No se pudo listar procesos para detectar cuentas de servicio")
-    return sorted(u for u in SERVICE_ACCOUNT_CANDIDATES if u in running_users)
+
+    system_accounts: set[str] = set()
+    try:
+        for entry in pwd.getpwall():
+            if _is_system_account(entry):
+                system_accounts.add(entry.pw_name)
+    except Exception:
+        logger.exception("No se pudo leer /etc/passwd para detectar cuentas de sistema")
+
+    return sorted(running_users & system_accounts)
 
 
 def full_report() -> dict:
