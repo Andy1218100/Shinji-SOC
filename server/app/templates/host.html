@@ -280,11 +280,31 @@ function formatDate(iso) {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Los nombres de archivo/carpeta vienen del host monitoreado: no son de fiar.
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+const TAGS_VISIBLE = 12;
+// Colapsar para esconder 2-3 items no ahorra nada, solo agrega un clic.
+const TAGS_COLLAPSE_OVER = 20;
+
+function collapsibleTags(tagHtmls) {
+  if (tagHtmls.length <= TAGS_COLLAPSE_OVER) return `<div class="report-tags">${tagHtmls.join("")}</div>`;
+  const tags = tagHtmls.map((t, idx) => idx < TAGS_VISIBLE ? t : `<span class="tag-extra">${t}</span>`).join("");
+  const more = `Ver todos (${tagHtmls.length})`;
+  return `<div class="report-tags">${tags}<button class="sm ghost tags-toggle" data-more="${more}">${more}</button></div>`;
+}
+
+function groupTitle(title, items) {
+  return items.length > TAGS_COLLAPSE_OVER ? `${title} · ${items.length}` : title;
+}
+
 function tagGroup(title, items, emptyText) {
   const body = items.length
-    ? `<div class="report-tags">${items.map(i => `<span class="badge neutral">${i}</span>`).join("")}</div>`
+    ? collapsibleTags(items.map(i => `<span class="badge neutral">${esc(i)}</span>`))
     : `<p style="color: var(--text-muted); font-size: var(--text-sm);">${emptyText}</p>`;
-  return `<div class="report-tag-group"><h4>${title}</h4>${body}</div>`;
+  return `<div class="report-tag-group"><h4>${groupTitle(title, items)}</h4>${body}</div>`;
 }
 
 const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
@@ -295,12 +315,20 @@ const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
 function tagGroupWarnIfAny(title, items, hint) {
   if (!items || !items.length) return "";
   const tags = items.map(i => {
-    const btn = isAdmin ? `<button class="sm ghost" data-grant-path="${i}">Dar acceso</button>` : "";
-    return `<span class="report-warn-row"><span class="badge warn">${i}</span>${btn}</span>`;
-  }).join("");
-  return `<div class="report-tag-group"><h4>${title}</h4><div class="report-tags">${tags}</div>
+    const btn = isAdmin ? `<button class="sm ghost" data-grant-path="${esc(i)}">Dar acceso</button>` : "";
+    return `<span class="report-warn-row"><span class="badge warn">${esc(i)}</span>${btn}</span>`;
+  });
+  return `<div class="report-tag-group"><h4>${groupTitle(title, items)}</h4>${collapsibleTags(tags)}
     <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">${hint}</p></div>`;
 }
+
+document.getElementById("system-report-wrap").addEventListener("click", (e) => {
+  const btn = e.target.closest(".tags-toggle");
+  if (!btn) return;
+  const box = btn.closest(".report-tags");
+  const expanded = box.classList.toggle("expanded");
+  btn.textContent = expanded ? "Ver menos" : btn.dataset.more;
+});
 
 async function loadSystemReport() {
   const wrap = document.getElementById("system-report-wrap");

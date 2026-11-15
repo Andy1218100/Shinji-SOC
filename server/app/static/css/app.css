@@ -527,6 +527,8 @@ table.data tbody tr:hover {
 .report-tag-group h4 { font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2); font-weight: 600; }
 .report-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .report-warn-row { display: inline-flex; align-items: center; gap: 6px; }
+.report-tags .tag-extra { display: contents; }
+.report-tags:not(.expanded) .tag-extra { display: none; }
 .report-ai-summary { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); white-space: pre-line; }
 
 /* Buttons */
