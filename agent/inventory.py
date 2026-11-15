@@ -13,7 +13,7 @@ logger = logging.getLogger("inventory")
 def collect() -> list[dict]:
     try:
         result = subprocess.run(
-            ["dpkg-query", "-W", "-f=${Package}\t${Version}\n"],
+            ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\t${Version}\n"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -23,14 +23,21 @@ def collect() -> list[dict]:
         logger.warning("dpkg-query no disponible; este host no parece ser Debian/Ubuntu, salteando inventario")
         return []
 
-    packages = []
+    # dict por nombre: con multiarch (amd64 + i386) dpkg lista el mismo
+    # paquete una vez por arquitectura.
+    packages: dict[str, str] = {}
     for line in result.stdout.splitlines():
-        if "\t" not in line:
+        parts = line.split("\t")
+        if len(parts) != 3:
             continue
-        name, version = line.split("\t", 1)
-        packages.append({"name": name.strip(), "version": version.strip()})
+        status, name, version = (p.strip() for p in parts)
+        # "ii" = instalado. Los "rc" (desinstalados con config residual)
+        # no tienen el binario y darian falsos positivos de CVE.
+        if status != "ii":
+            continue
+        packages[name] = version
 
-    return packages
+    return [{"name": n, "version": v} for n, v in packages.items()]
 
 
 def debian_release() -> str | None:

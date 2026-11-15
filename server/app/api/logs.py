@@ -41,12 +41,16 @@ async def ingest_inventory(
     """Reemplaza el inventario de paquetes del host por el ultimo reporte
     (es una foto completa, no un delta)."""
     await db.execute(delete(InstalledPackage).where(InstalledPackage.host_id == host.id))
-    for pkg in payload.packages:
-        db.add(InstalledPackage(host_id=host.id, name=pkg.name, version=pkg.version))
+    # Con multiarch (amd64 + i386, comun en hosts con servidores de juegos)
+    # dpkg lista el mismo paquete una vez por arquitectura; la tabla es
+    # unica por (host, nombre). Agentes viejos todavia mandan duplicados.
+    unique = {pkg.name: pkg.version for pkg in payload.packages}
+    for name, version in unique.items():
+        db.add(InstalledPackage(host_id=host.id, name=name, version=version))
     if payload.debian_release:
         host.debian_release = payload.debian_release
     await db.commit()
-    return {"status": "ok", "received": len(payload.packages)}
+    return {"status": "ok", "received": len(unique)}
 
 
 @router.post("/system-report/ingest", status_code=201)
