@@ -560,7 +560,11 @@ sudo bash -c '. /opt/prox-secure-agent/.env && bash /tmp/install.sh https://192.
    `SERVER_BIND=127.0.0.1` en el `.env`, para que el puerto 8000 sin
    cifrar quede solo para este equipo, y recrea el servidor. Despues activa
    "Cookies solo por HTTPS" en Configuracion: desde ese momento
-   `http://localhost:8000` ya no permite iniciar sesion.
+   `http://localhost:8000` ya no permite iniciar sesion. En Docker
+   Desktop, el primer `docker compose up -d server` despues de cambiar
+   `SERVER_BIND` puede fallar con "ports are not available", porque el
+   puerto del contenedor anterior todavia no se libero. Volver a correrlo
+   lo resuelve.
 
 **Dominio publico** (certificado de Let's Encrypt automatico). El dominio
 tiene que apuntar a este servidor y los puertos 80 y 443 tienen que llegar
