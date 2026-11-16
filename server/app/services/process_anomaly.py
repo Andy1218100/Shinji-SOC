@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.host import Host
 from app.schemas.logs import ProcessEventIn
-from app.services.ids import create_event
+from app.services.ids import create_event, process_severity
 
 
 async def process_anomalies(session: AsyncSession, host: Host, events: list[ProcessEventIn]) -> None:
@@ -19,6 +19,6 @@ async def process_anomalies(session: AsyncSession, host: Host, events: list[Proc
             "process_anomaly",
             source_ip=f"local:{host.hostname}",
             detail=detail,
-            severity="critical",
+            severity=process_severity(event.cmdline or "", event.parent_cmdline or ""),
             suggested_action="kill_process",
         )

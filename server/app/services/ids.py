@@ -47,11 +47,9 @@ _DOWNLOAD_EXEC = re.compile(r"(curl|wget)\b[^|;]*\|\s*(ba|da|z)?sh\b|base64\s+-d
 _REVERSE_SHELL = re.compile(r"/dev/tcp/|\bnc\b.*\s-e\s|\bncat\b.*\s-e\s|socat\b.*exec", re.IGNORECASE)
 
 
-def _process_signals(cmdline: str, parent: str) -> str:
-    """Senales calculadas en codigo, dadas al modelo como hechos: sin ellas,
-    qwen2.5:3b calificaba de malicioso un "curl ... | bash" lanzado por
-    php-fpm y aun asi decia que no convenia terminarlo."""
-    bad, good = [], []
+def process_signal_lists(cmdline: str, parent: str) -> tuple[list[str], list[str]]:
+    bad: list[str] = []
+    good: list[str] = []
     if _DOWNLOAD_EXEC.search(cmdline):
         bad.append("el comando descarga codigo de internet y lo ejecuta")
     if _REVERSE_SHELL.search(cmdline):
@@ -60,6 +58,23 @@ def _process_signals(cmdline: str, parent: str) -> str:
         bad.append("el proceso padre es el servidor web o la aplicacion web")
     if _SYSTEM_PARENT.search(parent) and not bad:
         good.append("lo lanzo systemd o cron, como los scripts de mantenimiento del sistema")
+    return bad, good
+
+
+def process_severity(cmdline: str, parent: str) -> str:
+    """critical solo con una senal concreta de intrusion. Antes todo
+    process_anomaly era critical: los demonios de Proxmox (pveproxy como
+    www-data, lanzado por systemd) salian "critical" aunque la IA dijera
+    que eran legitimos."""
+    bad, _ = process_signal_lists(cmdline, parent)
+    return "critical" if bad else "warning"
+
+
+def _process_signals(cmdline: str, parent: str) -> str:
+    """Senales calculadas en codigo, dadas al modelo como hechos: sin ellas,
+    qwen2.5:3b calificaba de malicioso un "curl ... | bash" lanzado por
+    php-fpm y aun asi decia que no convenia terminarlo."""
+    bad, good = process_signal_lists(cmdline, parent)
     text = ""
     if bad:
         text += " Senales de webshell o intrusion: " + "; ".join(bad) + "."

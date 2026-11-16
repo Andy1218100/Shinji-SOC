@@ -921,6 +921,11 @@ SUSPICIOUS_BINARIES = {
 TRUSTED_SCRIPTS = {
     # systemd arranca/para PostgreSQL de Debian asi (postgresql@.service).
     ("perl", ("-wT",), "/usr/bin/pg_ctlcluster"),
+    # Proxmox VE: interfaz web (puerto 8006) y proxy de consolas SPICE
+    # (3128), corren como www-data. Reportados en un host real cada vez que
+    # el agente se reiniciaba.
+    ("perl", ("-T",), "/usr/bin/pveproxy"),
+    ("perl", ("-T",), "/usr/bin/spiceproxy"),
 }
 
 _reported_pids: set[int] = set()
