@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Primera instalacion · Prox Secure</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="brand">
+        {% from "_icons.html" import icon %}
+        {{ icon("shield") }}
+        <span>Prox Secure</span>
+      </div>
+
+      <form id="step-account">
+        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
+          Primera instalacion: crea la cuenta <strong>super admin</strong>. Es la unica que puede crear cuentas admin y cambiar la configuracion de la plataforma.
+        </p>
+        <label for="code">Codigo de instalacion</label>
+        <input type="text" id="code" autocomplete="off" placeholder="XXXX-XXXX" autofocus />
+        <p style="font-size: var(--text-xs); color: var(--text-muted); margin: 0 0 var(--space-3);">
+          Lo escribe el servidor en su log al arrancar: <code>docker compose logs server | grep "Codigo de instalacion"</code>
+        </p>
+        <label for="username">Usuario</label>
+        <input type="text" id="username" autocomplete="username" />
+        <label for="password">Contrasena (minimo 10 caracteres)</label>
+        <input type="password" id="password" autocomplete="new-password" />
+        <label for="password2">Repetir contrasena</label>
+        <input type="password" id="password2" autocomplete="new-password" />
+        <p class="login-error" id="account-error"></p>
+        <button type="submit" class="primary"><span>Continuar</span></button>
+      </form>
+
+      <form id="step-mfa" style="display:none;">
+        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
+          Escanea el codigo con tu app de autenticacion (Google Authenticator, Authy, etc.) e ingresa el codigo de 6 digitos. La cuenta se crea recien al confirmar.
+        </p>
+        <div id="qr-code" style="display:flex; justify-content:center; margin-bottom: var(--space-3); background:#fff; border-radius: var(--radius-md); padding: var(--space-3);"></div>
+        <p style="font-size: var(--text-xs); color: var(--text-muted); word-break: break-all; margin: 0 0 var(--space-3);">
+          Si no puedes escanear, cargalo a mano: <code id="mfa-secret-text"></code>
+        </p>
+        <label for="mfa-code">Codigo de tu app de autenticacion</label>
+        <input type="text" id="mfa-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+        <p class="login-error" id="mfa-error"></p>
+        <button type="submit" class="primary"><span>Crear cuenta super admin</span></button>
+      </form>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script>
+    let pendingToken = null;
+
+    async function postJson(url, body) {
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    document.getElementById("step-account").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("account-error");
+      err.textContent = "";
+      const password = document.getElementById("password").value;
+      if (password !== document.getElementById("password2").value) {
+        err.textContent = "Las contrasenas no coinciden.";
+        return;
+      }
+      const r = await postJson("/api/v1/setup/begin", {
+        code: document.getElementById("code").value.trim(),
+        username: document.getElementById("username").value.trim(),
+        password,
+      });
+      if (!r.ok) {
+        if (r.status === 409) { window.location.href = "/login"; return; }
+        err.textContent = r.data.detail || `Error ${r.status}`;
+        return;
+      }
+      pendingToken = r.data.pending_token;
+      document.getElementById("mfa-secret-text").textContent = r.data.mfa_secret;
+      new QRCode(document.getElementById("qr-code"), { text: r.data.otpauth_uri, width: 180, height: 180 });
+      document.getElementById("step-account").style.display = "none";
+      document.getElementById("step-mfa").style.display = "block";
+      document.getElementById("mfa-code").focus();
+    });
+
+    document.getElementById("step-mfa").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("mfa-error");
+      err.textContent = "";
+      const r = await postJson("/api/v1/setup/finish", {
+        pending_token: pendingToken,
+        mfa_code: document.getElementById("mfa-code").value.trim(),
+      });
+      if (!r.ok) {
+        if (r.status === 409) { window.location.href = "/login"; return; }
+        err.textContent = r.data.detail || `Error ${r.status}`;
+        return;
+      }
+      window.location.href = "/";
+    });
+  </script>
+</body>
+</html>

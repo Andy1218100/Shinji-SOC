@@ -1,9 +1,8 @@
-"""Bootstrap: crea el primer usuario admin.
+"""Alternativa por terminal a la pagina /setup: crea la cuenta super admin.
 
-La pantalla de Usuarios (/users) requiere estar logueado como admin para
-crear mas cuentas -- este script resuelve el huevo-o-gallina del primer
-usuario, corriendo dentro del contenedor del servidor directo contra la
-base de datos.
+Lo normal es usar /setup en la primera instalacion (con el codigo que el
+servidor escribe en su log). Este script queda para cuando no hay acceso
+al navegador. Solo funciona si todavia no existe un super admin.
 
 Uso:
     docker compose exec server python create_first_admin.py tu_usuario
@@ -24,6 +23,10 @@ async def main(username: str) -> None:
         await conn.run_sync(Base.metadata.create_all)
 
     async with SessionLocal() as session:
+        has_super = (await session.execute(select(User.id).where(User.role == "superadmin").limit(1))).scalar_one_or_none()
+        if has_super:
+            print("Ya existe un super admin: crea las demas cuentas desde /users.", file=sys.stderr)
+            sys.exit(1)
         existing = (await session.execute(select(User).where(User.username == username))).scalar_one_or_none()
         if existing:
             print(f"Ya existe un usuario '{username}'.", file=sys.stderr)
@@ -32,7 +35,7 @@ async def main(username: str) -> None:
         temp_password = auth.generate_temp_password()
         user = User(
             username=username,
-            role="admin",
+            role="superadmin",
             password_hash=auth.hash_password(temp_password),
             mfa_secret=auth.generate_mfa_secret(),
             mfa_enabled=False,
@@ -41,7 +44,7 @@ async def main(username: str) -> None:
         session.add(user)
         await session.commit()
 
-    print("Admin creado.")
+    print("Super admin creado.")
     print(f"  usuario:    {username}")
     print(f"  contrasena: {temp_password}")
     print("Entra a /login con estos datos; el primer login te va a pedir una contrasena nueva y enrolar MFA.")

@@ -169,13 +169,32 @@ sin punto ni arco en el mapa -- nunca se inventa una ubicacion.
 
 No hay mas clave compartida: cada persona tiene su propia cuenta
 (usuario + contrasena + MFA por TOTP -- Google Authenticator, Authy,
-etc., codigo de 6 digitos). Dos roles: `admin` (ve todo, aprueba/bloquea,
-gestiona usuarios) y `viewer` (ve todo, no puede actuar).
+etc., codigo de 6 digitos). Tres roles:
 
-**Primer usuario**: `docker compose exec server python create_first_admin.py tu_usuario`
-(ver arriba). Es el unico momento donde hace falta tocar la terminal --
-todo lo demas se gestiona desde `/users` una vez que ese primer admin
-entro.
+- `superadmin`: uno solo. Crea y gestiona las cuentas admin y es el unico
+  que entra a Configuracion. No se puede desactivar ni eliminar desde el
+  panel.
+- `admin`: ve todo, aprueba y bloquea, y gestiona las cuentas de solo
+  lectura.
+- `viewer`: ve todo, no puede actuar.
+
+**Primera instalacion**: sin usuarios, `/login` lleva a `/setup`. Ahi se
+crea la cuenta super admin (usuario, contrasena y MFA con QR). El
+asistente pide un codigo de instalacion que el servidor escribe en su
+log al arrancar:
+
+```bash
+docker compose logs server | grep "Codigo de instalacion"
+```
+
+Sin ese codigo, un panel recien instalado y expuesto quedaria en manos
+del primero que entrara a `/setup`. Despues de 10 codigos incorrectos se
+genera uno nuevo. Si no hay navegador a mano,
+`docker compose exec server python create_first_admin.py tu_usuario` hace
+lo mismo por terminal.
+
+En instalaciones anteriores a este rol, al arrancar, el admin mas antiguo
+pasa a ser super admin.
 
 Desde `/users`, un admin puede desactivar, reactivar, resetear la
 contrasena o **eliminar** una cuenta de forma permanente. No se puede

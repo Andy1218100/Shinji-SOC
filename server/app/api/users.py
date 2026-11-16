@@ -11,6 +11,15 @@ from app.services import auth
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
+def _check_can_manage(actor: User, target: User) -> None:
+    """superadmin > admin > viewer. La cuenta super admin no se toca desde el
+    panel; las cuentas admin solo las gestiona el super admin."""
+    if target.is_superadmin:
+        raise HTTPException(status_code=403, detail="La cuenta super admin no se puede modificar desde el panel")
+    if target.is_admin and not actor.is_superadmin:
+        raise HTTPException(status_code=403, detail="Solo el super admin puede gestionar cuentas admin")
+
+
 @router.get("", response_model=list[UserOut])
 async def list_users(db: AsyncSession = Depends(get_db), _: User = Depends(require_admin)):
     result = await db.execute(select(User).order_by(User.username))
@@ -23,6 +32,8 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    if payload.role == "admin" and not admin.is_superadmin:
+        raise HTTPException(status_code=403, detail="Solo el super admin puede crear cuentas admin")
     existing = (await db.execute(select(User).where(User.username == payload.username))).scalar_one_or_none()
     if existing:
         raise HTTPException(status_code=409, detail="Ese nombre de usuario ya existe")
@@ -65,6 +76,7 @@ async def deactivate_user(
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
+    _check_can_manage(admin, user)
     user.active = False
     await db.commit()
     return {"status": "ok"}
@@ -74,11 +86,12 @@ async def deactivate_user(
 async def reactivate_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
+    _check_can_manage(admin, user)
     user.active = True
     await db.commit()
     return {"status": "ok"}
@@ -95,6 +108,7 @@ async def delete_user(
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
+    _check_can_manage(admin, user)
 
     created_others = (
         await db.execute(select(User.id).where(User.created_by == user.id).limit(1))
@@ -114,11 +128,12 @@ async def delete_user(
 async def reset_password(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_admin),
+    admin: User = Depends(require_admin),
 ):
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
+    _check_can_manage(admin, user)
 
     temp_password = auth.generate_temp_password()
     user.password_hash = auth.hash_password(temp_password)

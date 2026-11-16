@@ -1,11 +1,13 @@
 import os
 
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, require_superadmin
+from app.services import first_run
 from app.core.db import get_db
 from app.models.alert import Alert
 from app.models.host import Host
@@ -111,7 +113,7 @@ async def vulnerabilities_page(request: Request, user: User = Depends(get_curren
 
 
 @router.get("/settings")
-async def settings_page(request: Request, user: User = Depends(require_admin)):
+async def settings_page(request: Request, user: User = Depends(require_superadmin)):
     return templates.TemplateResponse("settings.html", {"request": request, "active_nav": "configuracion", "user": user})
 
 
@@ -123,5 +125,15 @@ async def users_page(request: Request, user: User = Depends(require_admin)):
 
 
 @router.get("/login")
-async def login_page(request: Request):
+async def login_page(request: Request, db: AsyncSession = Depends(get_db)):
+    if not await first_run.users_exist(db):
+        return RedirectResponse("/setup", status_code=303)
     return templates.TemplateResponse("login.html", {"request": request})
+
+
+@router.get("/setup")
+async def setup_page(request: Request, db: AsyncSession = Depends(get_db)):
+    """Primera instalacion. Con usuarios ya creados no se muestra nunca mas."""
+    if await first_run.users_exist(db):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("setup.html", {"request": request})

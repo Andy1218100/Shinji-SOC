@@ -33,11 +33,13 @@
           <span class="label">Vulnerabilidades</span>
           <span class="nav-badge" data-nav="vulnerabilities" data-count="0">0</span>
         </a>
-        {% if user and user.role == 'admin' %}
+        {% if user and user.is_admin %}
         <a class="nav-link {{ 'active' if active_nav == 'usuarios' else '' }}" href="/users">
           {{ icon("users") }}
           <span class="label">Usuarios</span>
         </a>
+        {% endif %}
+        {% if user and user.is_superadmin %}
         <a class="nav-link {{ 'active' if active_nav == 'configuracion' else '' }}" href="/settings">
           {{ icon("settings") }}
           <span class="label">Configuracion</span>
@@ -48,7 +50,7 @@
         {% if user %}
         <div class="sidebar-user">
           <span class="sidebar-user-name">{{ user.username }}</span>
-          <span class="sidebar-user-role">{{ 'Admin' if user.role == 'admin' else 'Solo lectura' }}</span>
+          <span class="sidebar-user-role">{{ 'Super admin' if user.is_superadmin else ('Admin' if user.is_admin else 'Solo lectura') }}</span>
         </div>
         {% endif %}
         <button class="signout" data-action="sign-out" type="button">

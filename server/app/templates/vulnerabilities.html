@@ -77,7 +77,7 @@ async function loadHostNames() {
   }
 }
 
-const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
+const isAdmin = {{ 'true' if user.is_admin else 'false' }};
 // Secciones colapsables: su estado sobrevive al refresco de 30s.
 const openSections = new Set();
 // Pestana de host elegida: se recuerda en este navegador (si se puede).

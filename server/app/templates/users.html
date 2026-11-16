@@ -28,7 +28,7 @@
       <label for="new-role" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Rol</label>
       <select id="new-role" style="height: 36px; background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--text-primary); padding: 0 10px;">
         <option value="viewer">Solo lectura</option>
-        <option value="admin">Admin</option>
+        {% if user.is_superadmin %}<option value="admin">Admin</option>{% endif %}
       </select>
     </div>
     <button type="submit" class="primary">Crear</button>
@@ -44,6 +44,12 @@
 </section>
 
 <script>
+const isSuper = {{ 'true' if user.is_superadmin else 'false' }};
+function esc(v) { return String(v ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+// Igual que users._check_can_manage: super admin intocable desde el panel,
+// cuentas admin solo para el super admin.
+function canManage(u) { return u.role !== "superadmin" && (u.role !== "admin" || isSuper); }
+
 function formatDate(iso) {
   if (!iso) return "nunca";
   const d = new Date(iso);
@@ -99,18 +105,18 @@ async function loadUsers() {
 
     return `
       <tr>
-        <td>${u.username}</td>
-        <td>${u.role === "admin" ? "Admin" : "Solo lectura"}</td>
+        <td>${esc(u.username)}</td>
+        <td>${u.role === "superadmin" ? "Super admin" : (u.role === "admin" ? "Admin" : "Solo lectura")}</td>
         <td>${statusBadge}</td>
         <td>${mfaText}</td>
         <td>${formatDate(u.created_at)}</td>
         <td>${formatDate(u.last_login)}</td>
         <td>
-          <div class="row-actions">
+          ${canManage(u) ? `<div class="row-actions">
             ${toggleAction}
-            <button class="sm ghost" data-reset="${u.id}">Resetear contrasena</button>
-            <button class="sm danger" data-delete="${u.id}" data-username="${u.username}">Eliminar</button>
-          </div>
+            <button class="sm ghost" data-reset="${esc(u.id)}">Resetear contrasena</button>
+            <button class="sm danger" data-delete="${esc(u.id)}" data-username="${esc(u.username)}">Eliminar</button>
+          </div>` : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${u.role === "superadmin" ? "cuenta principal" : "solo el super admin"}</span>`}
         </td>
       </tr>`;
   }).join("");

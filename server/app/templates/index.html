@@ -7,7 +7,7 @@
   <p>Estado de tus hosts en tiempo real.</p>
 </div>
 
-{% if user.role == 'admin' %}
+{% if user.is_admin %}
 <section class="panel" id="new-host-panel" style="display:none; border: 1px solid var(--warn);">
   <h2 style="color: var(--warn);">Host creado: instala el agente</h2>
   <p>
@@ -47,12 +47,12 @@
 <section class="panel" id="hosts-panel">
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-3);">
     <h2 style="margin:0;">Hosts</h2>
-    {% if user.role == 'admin' %}
+    {% if user.is_admin %}
     <button class="sm primary" id="show-new-host-form-btn" type="button">+ Nuevo host</button>
     {% endif %}
   </div>
 
-  {% if user.role == 'admin' %}
+  {% if user.is_admin %}
   <form id="create-host-form" style="display:none; gap: var(--space-3); align-items:flex-end; flex-wrap: wrap; margin-bottom: var(--space-4);">
     <div>
       <label for="new-host-name-input" style="display:block; font-size: var(--text-xs); color: var(--text-muted); margin-bottom: var(--space-2);">Nombre</label>
@@ -94,7 +94,7 @@
         <td>{{ m.load1 if m and m.load1 is not none else "-" }}</td>
         <td>{{ host.last_seen.strftime("%d/%m %H:%M") if host.last_seen else "nunca" }}</td>
         <td>
-          {% if user.role == 'admin' %}
+          {% if user.is_admin %}
           <button class="sm danger" data-delete-host="{{ host.id }}" data-host-name="{{ host.name }}">Eliminar</button>
           {% endif %}
         </td>
@@ -111,7 +111,7 @@
   {% endif %}
 </section>
 
-{% if user.role == 'admin' %}
+{% if user.is_admin %}
 <script>
 const showFormBtn = document.getElementById('show-new-host-form-btn');
 const form = document.getElementById('create-host-form');

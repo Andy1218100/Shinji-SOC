@@ -7,7 +7,7 @@
   <p>{{ host.hostname }}{% if host.ip_address %} · {{ host.ip_address }}{% endif %}{% if host.os %} · {{ host.os }}{% endif %}</p>
 </div>
 
-{% if user.role == 'admin' %}
+{% if user.is_admin %}
 <section class="panel" id="grant-access-panel" style="display:none; border: 1px solid var(--warn);">
   <h2 style="color: var(--warn);">Dar acceso de lectura</h2>
   <p>
@@ -307,7 +307,7 @@ function tagGroup(title, items, emptyText) {
   return `<div class="report-tag-group"><h4>${groupTitle(title, items)}</h4>${body}</div>`;
 }
 
-const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
+const isAdmin = {{ 'true' if user.is_admin else 'false' }};
 
 // Solo se muestra si hay algo -- son avisos de "encontre esto pero no lo
 // puedo vigilar por permisos", no tiene sentido ocuparle lugar a la UI

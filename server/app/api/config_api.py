@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.api.deps import require_admin
+from app.api.deps import require_superadmin
 from app.models.user import User
 from app.services import app_settings, auth
 
@@ -33,13 +33,13 @@ def _check_env_file() -> None:
         )
 
 
-@router.get("", dependencies=[Depends(require_admin)])
+@router.get("", dependencies=[Depends(require_superadmin)])
 async def get_config():
     return app_settings.public_view()
 
 
 @router.put("")
-async def put_config(payload: ConfigUpdate, admin: User = Depends(require_admin)):
+async def put_config(payload: ConfigUpdate, admin: User = Depends(require_superadmin)):
     _check_mfa(admin, payload.mfa_code)
     _check_env_file()
     try:
@@ -52,7 +52,7 @@ async def put_config(payload: ConfigUpdate, admin: User = Depends(require_admin)
 
 
 @router.post("/generate/{key}")
-async def generate_secret(key: str, payload: MfaOnly, admin: User = Depends(require_admin)):
+async def generate_secret(key: str, payload: MfaOnly, admin: User = Depends(require_superadmin)):
     _check_mfa(admin, payload.mfa_code)
     _check_env_file()
     try:
@@ -63,7 +63,7 @@ async def generate_secret(key: str, payload: MfaOnly, admin: User = Depends(requ
     return {"status": "ok", "logged_out": key == "SESSION_SECRET_KEY"}
 
 
-@router.get("/ollama-models", dependencies=[Depends(require_admin)])
+@router.get("/ollama-models", dependencies=[Depends(require_superadmin)])
 async def get_ollama_models():
     try:
         return {"models": await app_settings.ollama_models()}
@@ -71,7 +71,7 @@ async def get_ollama_models():
         raise HTTPException(status_code=502, detail=f"No se pudo consultar Ollama: {exc}") from None
 
 
-@router.post("/geoip-download", dependencies=[Depends(require_admin)])
+@router.post("/geoip-download", dependencies=[Depends(require_superadmin)])
 async def geoip_download():
     try:
         await app_settings.download_geoip()
