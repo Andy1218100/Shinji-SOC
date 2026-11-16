@@ -359,9 +359,9 @@ async function loadSystemReport() {
 
   wrap.innerHTML = `
     <div class="report-fact-grid">
-      <div><div class="report-fact-label">Sistema operativo</div><div class="report-fact-value">${r.os_name || "-"}</div></div>
-      <div><div class="report-fact-label">Kernel</div><div class="report-fact-value">${r.kernel || "-"}</div></div>
-      <div><div class="report-fact-label">CPUs</div><div class="report-fact-value">${r.cpu_count ?? "-"}</div></div>
+      <div><div class="report-fact-label">Sistema operativo</div><div class="report-fact-value">${esc(r.os_name || "-")}</div></div>
+      <div><div class="report-fact-label">Kernel</div><div class="report-fact-value">${esc(r.kernel || "-")}</div></div>
+      <div><div class="report-fact-label">CPUs</div><div class="report-fact-value">${esc(r.cpu_count ?? "-")}</div></div>
       <div><div class="report-fact-label">RAM</div><div class="report-fact-value">${r.mem_total_mb ? Math.round(r.mem_total_mb) + " MB" : "-"}</div></div>
       <div><div class="report-fact-label">Disco</div><div class="report-fact-value">${r.disk_total_gb ? Math.round(r.disk_total_gb) + " GB" : "-"}</div></div>
       <div><div class="report-fact-label">Ultimo informe</div><div class="report-fact-value">${formatDate(data.generated_at)}</div></div>
@@ -381,7 +381,7 @@ async function loadSystemReport() {
     )}
     ${tagGroup("Cuentas de servicio que vigila", r.service_accounts || [], "No encontro cuentas de servicio corriendo.")}
     ${data.ai_summary
-      ? `<div class="report-ai-summary">${data.ai_summary}</div>`
+      ? `<div class="report-ai-summary">${esc(data.ai_summary)}</div>`
       : `<p style="color: var(--text-muted); font-size: var(--text-sm);">La IA todavia no genero el informe narrativo.</p>`}
   `;
 

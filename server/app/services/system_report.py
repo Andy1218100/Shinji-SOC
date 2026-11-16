@@ -1,8 +1,10 @@
+import asyncio
 import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionLocal
 from app.models.host import Host
 from app.models.system_report import SystemReport
 from app.schemas.logs import SystemReportIn
@@ -102,3 +104,38 @@ async def save_and_summarize(db: AsyncSession, host: Host, payload: SystemReport
     await db.commit()
 
     return report
+
+
+# El agente reenvia el informe una vez al dia: si la IA fallo (timeout,
+# respuesta invalida), el host quedaba hasta 24 h sin resumen.
+RETRY_INTERVAL_SECONDS = 1800
+FIRST_RETRY_DELAY_SECONDS = 120
+
+
+async def retry_missing_summaries() -> None:
+    async with SessionLocal() as db:
+        rows = (
+            await db.execute(
+                select(SystemReport, Host)
+                .join(Host, Host.id == SystemReport.host_id)
+                .where(SystemReport.ai_summary.is_(None))
+            )
+        ).all()
+        for report, host in rows:
+            try:
+                payload = SystemReportIn.model_validate(report.raw)
+                report.ai_summary = await ai.ask(_build_prompt(host, payload))
+                await db.commit()
+                logger.info("Informe de IA regenerado para %s", host.name)
+            except Exception:
+                logger.exception("Sigue sin poder generarse el informe de IA para %s", host.name)
+
+
+async def run_forever() -> None:
+    await asyncio.sleep(FIRST_RETRY_DELAY_SECONDS)
+    while True:
+        try:
+            await retry_missing_summaries()
+        except Exception:
+            logger.exception("Fallo el reintento de informes de IA")
+        await asyncio.sleep(RETRY_INTERVAL_SECONDS)

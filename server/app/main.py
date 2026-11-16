@@ -11,6 +11,7 @@ from app.api import ai, alerts, auth, commands, dashboard, hosts, logs, metrics,
 from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, engine, ensure_hypertables
 from app.services.alerting import run_forever as alerting_run_forever
+from app.services.system_report import run_forever as system_report_run_forever
 from app.services.vuln_scan import run_forever as vuln_scan_run_forever
 
 logging.basicConfig(level=logging.INFO)
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
     tasks = [
         asyncio.create_task(alerting_run_forever()),
         asyncio.create_task(vuln_scan_run_forever()),
+        asyncio.create_task(system_report_run_forever()),
     ]
     yield
     for task in tasks:

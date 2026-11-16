@@ -78,6 +78,15 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   IA") y lo reintenta en el escaneo siguiente. El chequeo mira
   identificadores, no el sentido del texto: el campo `fixed_version`
   sigue siendo el dato real que vino de OSV.dev.
+- Muchos hallazgos no son explotables en la practica. OSV copia lo que
+  marca el tracker de seguridad de Debian, y Debian deja como
+  "vulnerable" en todas sus releases, sin version corregida, los CVEs que
+  clasifica como `unimportant`. Por ejemplo, todos los de `binutils`,
+  porque ese paquete "not covered by security support"
+  (https://security-tracker.debian.org/tracker/CVE-2017-13716). Por eso
+  un CVE de binutils 2.29 aparece contra 2.44. En un Proxmox real, 174
+  de 591 hallazgos eran `unimportant` y 417 todavia no tenian urgencia
+  asignada. Prox Secure todavia no guarda esa urgencia.
 - No hay sistema de migraciones (Alembic ni similar): `create_all` solo
   crea tablas nuevas, nunca agrega columnas a una tabla existente. Si
   actualizas desde una base de datos vieja y algo tira

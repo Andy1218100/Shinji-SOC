@@ -64,6 +64,10 @@
 <script src="https://unpkg.com/leaflet-ant-path@1.3.0/dist/leaflet-ant-path.js"></script>
 <script>
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
+// Todo lo que viene de la API se escapa: el resumen de IA sale de un prompt
+// con user-agents y rutas que manda cualquiera desde internet (inyeccion
+// de prompt -> HTML), y la IP/tipo vienen de logs parseados en el host.
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 const MAP_VISIBLE_WINDOW_MS = 10 * 60 * 1000; // la marca/arco de un evento se borra del mapa a los 10 min
 
 function isRecent(ev) {
@@ -202,8 +206,8 @@ function updateOrigins(events) {
   el.innerHTML = top.map(([ip, entry], i) => `
     <div class="origins-row">
       <span class="origins-rank">${i + 1}</span>
-      <span class="origins-ip">${ip}</span>
-      ${entry.geo ? `<span class="origins-geo">${entry.geo}</span>` : ''}
+      <span class="origins-ip">${esc(ip)}</span>
+      ${entry.geo ? `<span class="origins-geo">${esc(entry.geo)}</span>` : ''}
       <span class="origins-count">${entry.count}</span>
     </div>`).join('');
 }
@@ -242,7 +246,7 @@ async function loadEvents() {
       radius: 7,
       color: sev === 'crit' ? '#e5595c' : '#e0a030',
       fillOpacity: 0.6,
-    }).bindPopup(`${ev.source_ip}<br>${ev.kind}`);
+    }).bindPopup(`${esc(ev.source_ip)}<br>${esc(ev.kind)}`);
     clusterGroup.addLayer(marker);
   }
 
@@ -252,17 +256,17 @@ async function loadEvents() {
     const canAct = ev.status === 'open' && ev.suggested_action;
     const actions = canAct ? `
       <div class="row-actions">
-        <button class="sm primary" data-approve="${ev.id}">Aprobar ${ev.suggested_action}</button>
-        <button class="sm ghost" data-dismiss="${ev.id}">Descartar</button>
-      </div>` : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${ev.status}</span>`;
+        <button class="sm primary" data-approve="${esc(ev.id)}">Aprobar ${esc(ev.suggested_action)}</button>
+        <button class="sm ghost" data-dismiss="${esc(ev.id)}">Descartar</button>
+      </div>` : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${esc(ev.status)}</span>`;
 
     return `
       <tr>
         <td>${formatDate(ev.created_at)}</td>
-        <td>${ev.kind}</td>
-        <td><span class="badge ${sev}">${ev.severity}</span></td>
-        <td>${ev.source_ip || '-'}${geo}</td>
-        <td>${ev.ai_summary || '<span style="color:var(--text-muted)">pendiente</span>'}</td>
+        <td>${esc(ev.kind)}</td>
+        <td><span class="badge ${sev}">${esc(ev.severity)}</span></td>
+        <td>${esc(ev.source_ip || '-')}${esc(geo)}</td>
+        <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}</td>
         <td>${actions}</td>
       </tr>`;
   }).join('');
@@ -304,10 +308,10 @@ async function loadBlocked() {
 
   const body = rows.map(b => `
     <tr>
-      <td>${b.ip}</td>
+      <td>${esc(b.ip)}</td>
       <td>${formatDate(b.blocked_at)}</td>
-      <td>${b.reason || '-'}</td>
-      <td><button class="sm ghost" data-unblock="${b.id}">Desbloquear</button></td>
+      <td>${esc(b.reason || '-')}</td>
+      <td><button class="sm ghost" data-unblock="${esc(b.id)}">Desbloquear</button></td>
     </tr>`).join('');
 
   wrap.innerHTML = `
