@@ -10,3 +10,4 @@ venv/
 *.log
 server/data/*.mmdb
 docker-compose.override.yml
+.mcp.json
