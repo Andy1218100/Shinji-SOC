@@ -98,8 +98,15 @@ async def discovery_loop(client: httpx.AsyncClient, base_url: str, headers: dict
         await send_system_report(client, base_url, headers)
 
 
+# Si el envio falla (servidor reiniciandose, red), reintentar pronto: con
+# el intervalo normal (1 dia) un corte justo al arrancar el agente dejaba
+# el host un dia entero con el inventario viejo (paso en un host real).
+INVENTORY_RETRY_SECONDS = 300
+
+
 async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
     while True:
+        wait = interval
         try:
             packages = inventory.collect()
             if packages:
@@ -109,8 +116,9 @@ async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict
                 )
                 resp.raise_for_status()
         except Exception:
-            logger.exception("Fallo enviando inventario de paquetes")
-        await asyncio.sleep(interval)
+            logger.exception("Fallo enviando inventario de paquetes, reintento en %ss", INVENTORY_RETRY_SECONDS)
+            wait = min(interval, INVENTORY_RETRY_SECONDS)
+        await asyncio.sleep(wait)
 
 
 async def commands_loop(
