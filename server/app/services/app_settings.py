@@ -40,6 +40,7 @@ class Field:
     min: int | None = None
     max: int | None = None
     applies: str = "Inmediato"
+    optional: bool = False  # str que puede quedar vacio
 
 
 CATALOG: tuple[Field, ...] = (
@@ -55,9 +56,36 @@ CATALOG: tuple[Field, ...] = (
     Field("AUDIT_API_TOKEN", "audit_api_token", "Token de auditoria (MCP)", "Auditoria externa", "secret",
           "Lo usa el servidor MCP de tools/mcp_audit, que lo lee de este mismo .env. Vacio = auditoria apagada."),
     Field("MAXMIND_ACCOUNT_ID", "maxmind_account_id", "MaxMind Account ID", "Mapa de ataques (GeoIP)", "str",
-          "Cuenta gratuita en maxmind.com/en/geolite2/signup: el Account ID esta arriba a la izquierda de tu cuenta."),
+          "Cuenta gratuita en maxmind.com/en/geolite2/signup: el Account ID esta arriba a la izquierda de tu cuenta.",
+          optional=True),
     Field("MAXMIND_LICENSE_KEY", "maxmind_license_key", "MaxMind License Key", "Mapa de ataques (GeoIP)", "secret",
           "En tu cuenta de MaxMind: Manage License Keys. Despues usa \"Descargar base GeoIP\"."),
+    Field("NOTIFY_MIN_SEVERITY", "notify_min_severity", "Avisar eventos desde", "Notificaciones", "choice",
+          "critical: solo lo grave (fuerza bruta contra root, login tras fallos, webshell). warning: tambien escaneos de rutas, que en un servidor expuesto son constantes.",
+          choices=("critical", "warning")),
+    Field("NOTIFY_VULNS", "notify_vulns", "Avisar vulnerabilidades con solucion", "Notificaciones", "bool",
+          "Un mensaje por escaneo cuando aparecen CVEs nuevos que ya tienen version corregida (algo para actualizar). Los que no tienen parche no avisan."),
+    Field("NOTIFY_INCLUDE_IPS", "notify_include_ips", "Incluir IPs de origen", "Notificaciones", "bool",
+          "Los mensajes salen a Telegram, ntfy o tu servidor de correo. Apagado, solo dicen \"IP en el panel\" (minimizacion de datos)."),
+    Field("NOTIFY_COOLDOWN_SECONDS", "notify_cooldown_seconds", "Minimo entre avisos iguales (segundos)", "Notificaciones", "int",
+          "Un aviso por tipo de evento y host en este periodo: un ataque sostenido no manda cien mensajes.", min=60, max=86400),
+    Field("TELEGRAM_BOT_TOKEN", "telegram_bot_token", "Telegram: token del bot", "Notificaciones", "secret",
+          "Crea un bot hablando con @BotFather en Telegram; te da el token."),
+    Field("TELEGRAM_CHAT_ID", "telegram_chat_id", "Telegram: chat ID", "Notificaciones", "str",
+          "Tu ID numerico (te lo da @userinfobot) o el de un grupo. Escribile algo al bot antes, si no no te puede escribir.",
+          optional=True),
+    Field("NTFY_URL", "ntfy_url", "ntfy: URL del tema", "Notificaciones", "str",
+          "Ej. https://ntfy.sh/un-nombre-dificil-de-adivinar (en ntfy.sh publico, quien sepa el tema lee los mensajes) o tu propio servidor ntfy.",
+          optional=True),
+    Field("NTFY_TOKEN", "ntfy_token", "ntfy: token de acceso", "Notificaciones", "secret",
+          "Solo si el tema esta protegido (tk_...)."),
+    Field("SMTP_HOST", "smtp_host", "Correo: servidor SMTP", "Notificaciones", "str", "Ej. smtp.gmail.com.", optional=True),
+    Field("SMTP_PORT", "smtp_port", "Correo: puerto", "Notificaciones", "int", "587 con STARTTLS, 465 con TLS directo.", min=1, max=65535),
+    Field("SMTP_STARTTLS", "smtp_starttls", "Correo: usar STARTTLS", "Notificaciones", "bool", "Dejalo activado salvo que tu servidor no lo soporte (en 465 no se usa)."),
+    Field("SMTP_USER", "smtp_user", "Correo: usuario", "Notificaciones", "str", "Vacio si el servidor no pide login.", optional=True),
+    Field("SMTP_PASSWORD", "smtp_password", "Correo: contrasena", "Notificaciones", "secret", "En Gmail, una contrasena de aplicacion, no la de la cuenta."),
+    Field("SMTP_FROM", "smtp_from", "Correo: remitente", "Notificaciones", "str", "Direccion desde la que sale el aviso.", optional=True),
+    Field("SMTP_TO", "smtp_to", "Correo: destinatario", "Notificaciones", "str", "A quien le llegan los avisos (varias separadas por coma).", optional=True),
     Field("IDS_WINDOW_SECONDS", "ids_window_seconds", "Ventana de deteccion (segundos)", "Deteccion de intrusos", "int",
           "Periodo en el que se cuentan las peticiones de una misma IP.", min=10, max=3600),
     Field("IDS_REQUESTS_THRESHOLD", "ids_requests_threshold", "Peticiones para marcar fuerza bruta", "Deteccion de intrusos", "int",
@@ -178,8 +206,12 @@ def parse(field: Field, raw) -> object:
         return number
     if field.kind == "choice" and value not in field.choices:
         raise ValueError(f"{field.label}: opcion invalida")
-    if field.kind == "str" and field.key != "MAXMIND_ACCOUNT_ID" and not value:
+    if field.kind == "str" and not field.optional and not value:
         raise ValueError(f"{field.label}: no puede quedar vacio")
+    if field.key == "NTFY_URL" and value and not value.startswith(("https://", "http://")):
+        raise ValueError(f"{field.label}: tiene que empezar con https://")
+    if field.key in ("SMTP_FROM", "SMTP_TO") and value and "@" not in value:
+        raise ValueError(f"{field.label}: no parece una direccion de correo")
     if field.key == "MAXMIND_ACCOUNT_ID" and value and not value.isdigit():
         raise ValueError(f"{field.label}: es un numero")
     return value

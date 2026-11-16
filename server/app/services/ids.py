@@ -18,7 +18,7 @@ from app.models.host import Host
 from app.core.db import SessionLocal
 from app.models.security import AuthAttempt, IngestedRequest, SecurityEvent
 from app.schemas.logs import AuthEventIn, LogEntryIn
-from app.services import ai, geoip
+from app.services import ai, geoip, notify
 from app.services.event_bus import security_events_bus
 
 logger = logging.getLogger("ids")
@@ -28,6 +28,17 @@ SUSPICIOUS_PATH_MARKERS = (
     "/etc/passwd", "../", "..%2f", "shell.php", "cmd.php", "adminer.php",
     ".sql", "config.php.bak", "/actuator", "/.aws", "/.ssh",
 )
+
+
+KIND_LABELS = {
+    "path_scan": "escaneo de rutas web",
+    "brute_force": "flood o fuerza bruta HTTP",
+    "process_anomaly": "proceso sospechoso en una cuenta de servicio",
+    "ssh_brute_force": "fuerza bruta por SSH",
+    "pve_brute_force": "fuerza bruta en la web de Proxmox",
+    "login_after_failures": "login exitoso despues de varios fallos",
+}
+ACTION_LABELS = {"block_ip": "bloquear la IP", "kill_process": "terminar el proceso"}
 
 
 def is_suspicious_path(path: str) -> bool:
@@ -196,6 +207,12 @@ async def create_event(
     await session.refresh(event)
     security_events_bus.publish({"event_id": str(event.id)})
 
+    notify.notify_later(
+        f"sec|{host.id}|{kind}", severity,
+        f"Prox Secure · {severity.upper()} · {host.name}: {KIND_LABELS.get(kind, kind)}",
+        f"{KIND_LABELS.get(kind, kind)} en {host.name}{notify.ip_text(source_ip)}.\n"
+        f"Accion sugerida: {ACTION_LABELS.get(suggested_action, 'ninguna')} (requiere aprobacion en el panel, Seguridad).",
+    )
     # En segundo plano: con la IA en CPU un resumen tarda decenas de segundos
     # y la peticion del agente que trajo el evento corta a los 30 s.
     asyncio.create_task(_summarize(event.id, build_event_prompt(host, kind, source_ip, detail, suggested_action)))

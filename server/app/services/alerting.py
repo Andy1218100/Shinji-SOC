@@ -9,7 +9,7 @@ from app.models.alert import Alert, AlertRule
 from app.models.host import Host
 from app.models.metric import Metric
 from app.models.system_report import SystemReport
-from app.services import ai
+from app.services import ai, notify
 
 logger = logging.getLogger("alerting")
 
@@ -114,6 +114,11 @@ async def evaluate_once() -> None:
                     alert = Alert(rule_id=rule.id, host_id=host.id, value=value, status="firing")
                     session.add(alert)
                     await session.commit()
+                    notify.notify_later(
+                        f"alert|{host.id}|{rule.id}", rule.severity,
+                        f"Prox Secure · {str(rule.severity).upper()} · {host.name}: {rule.name}",
+                        f"{rule.metric_field} = {value:.1f} (umbral {rule.operator} {rule.threshold}) en {host.name}.",
+                    )
                     snapshot = _metric_snapshot(metric, await _cpu_count(session, host.id))
                     summary = await _generate_summary(host, rule, value, snapshot)
                     if summary:

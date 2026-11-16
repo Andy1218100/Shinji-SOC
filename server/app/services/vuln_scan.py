@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
-from app.services import ai, audit, osv
+from app.services import ai, audit, notify, osv
 
 logger = logging.getLogger("vuln_scan")
 
@@ -268,6 +268,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
 
     _active_rules[:] = await audit.active_rules(session)
     new_findings = 0
+    new_fixable: dict[str, int] = {}
     now = datetime.now(timezone.utc)
     existing = {
         (f.package_name, f.vuln_id): f
@@ -330,6 +331,8 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             pkg_findings.append(finding)
             added = True
             new_findings += 1
+            if finding.fixed_version and not finding.not_applicable:
+                new_fixable[package.name] = new_fixable.get(package.name, 0) + 1
 
         await session.commit()
 
@@ -366,6 +369,15 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             resolved += 1
     host.last_vuln_scan_at = now
     await session.commit()
+    if new_fixable and settings.notify_vulns and notify.channels():
+        pkgs = ", ".join(f"{p} ({n})" for p, n in sorted(new_fixable.items())[:10])
+        total = sum(new_fixable.values())
+        asyncio.create_task(notify.send(
+            f"Prox Secure · {host.name}: {total} vulnerabilidades con solucion",
+            f"Hay version corregida para: {pkgs}" + (" y otros." if len(new_fixable) > 10 else ".")
+            + f"\nActualiza con apt en {host.name} y usa \"Escanear ahora\" en Vulnerabilidades.",
+            "warning",
+        ))
     _last_result[str(host.id)] = {"new": new_findings, "resolved": resolved, "finished_at": now.isoformat()}
     return new_findings
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import require_superadmin
 from app.models.user import User
-from app.services import app_settings, auth
+from app.services import app_settings, auth, notify
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
 logger = logging.getLogger("config")
@@ -80,3 +80,15 @@ async def geoip_download():
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Fallo la descarga de MaxMind: {exc}") from None
     return {"status": "ok"}
+
+
+@router.post("/notify-test", dependencies=[Depends(require_superadmin)])
+async def notify_test():
+    if not notify.channels():
+        raise HTTPException(status_code=422, detail="No hay ningun canal configurado: guarda primero Telegram, ntfy o correo")
+    results = await notify.send(
+        "Prox Secure · prueba de notificacion",
+        "Si lees esto, los avisos de Prox Secure llegan por este canal.",
+        "warning",
+    )
+    return {"results": results}

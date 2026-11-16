@@ -45,6 +45,23 @@ class Settings(BaseSettings):
     # que reporta el agente. Una vez al dia por defecto.
     vuln_scan_interval_seconds: int = 86400
 
+    # Notificaciones (services/notify.py). Un canal sin datos no se usa.
+    notify_min_severity: str = "critical"  # warning | critical
+    notify_include_ips: bool = False
+    notify_cooldown_seconds: int = 600
+    notify_vulns: bool = True
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    ntfy_url: str = ""
+    ntfy_token: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_to: str = ""
+    smtp_starttls: bool = True
+
     # Token del auditor externo (servidor MCP en la PC del admin, ver
     # tools/mcp_audit). Vacio = los endpoints /api/v1/audit/* quedan apagados.
     audit_api_token: str = ""

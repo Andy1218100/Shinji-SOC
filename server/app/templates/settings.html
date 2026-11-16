@@ -74,6 +74,11 @@ function render() {
           </tr>`).join('')}
         </tbody>
       </table>
+      ${g === 'Notificaciones' ? `
+        <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
+          <button class="sm" type="button" id="notify-test-btn">Enviar notificacion de prueba</button>
+          <span style="color: var(--text-muted); font-size: var(--text-xs);" id="notify-test-result">Guarda primero los datos del canal.</span>
+        </div>` : ''}
       ${g.startsWith('Mapa') ? `
         <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
           <button class="sm" type="button" id="geoip-btn">Descargar base GeoIP</button>
@@ -109,6 +114,7 @@ function render() {
   }));
   wrap.querySelectorAll('[data-generate]').forEach(btn => btn.addEventListener('click', () => generate(btn.dataset.generate)));
   document.getElementById('geoip-btn')?.addEventListener('click', downloadGeoip);
+  document.getElementById('notify-test-btn')?.addEventListener('click', notifyTest);
 }
 
 function updateSaveBar() {
@@ -166,6 +172,15 @@ async function generate(key) {
   if (data.logged_out) { window.location.href = '/login'; return; }
   toast('Token nuevo guardado.', 'success');
   load();
+}
+
+async function notifyTest() {
+  const out = document.getElementById('notify-test-result');
+  out.textContent = 'Enviando...';
+  const res = await fetch('/api/v1/config/notify-test', { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { out.textContent = data.detail || `Error ${res.status}`; return; }
+  out.textContent = Object.entries(data.results).map(([ch, r]) => `${ch}: ${r}`).join(' · ');
 }
 
 async function downloadGeoip() {

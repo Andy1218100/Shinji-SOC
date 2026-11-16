@@ -526,6 +526,29 @@ Como funciona:
   puestos dejan la plataforma sin base de datos o sin IA, y no se podrian
   arreglar desde la propia pagina.
 
+## Notificaciones
+
+Avisos por **Telegram**, **ntfy** y/o **correo (SMTP)**. Se configuran en
+Configuracion > Notificaciones, que tiene un boton de prueba. Un canal sin
+datos no se usa.
+
+Que avisa:
+
+- **Eventos de seguridad** desde la severidad elegida. Por defecto solo
+  los criticos: fuerza bruta contra root, login despues de fallos, webshell.
+- **Alertas de metricas** que se disparan.
+- **Vulnerabilidades nuevas con solucion publicada:** un mensaje por
+  escaneo. Las que no tienen parche no avisan.
+
+Para no saturar, se manda un aviso por tipo de evento y host cada
+`NOTIFY_COOLDOWN_SECONDS`, 10 minutos por defecto.
+
+Los mensajes salen a servicios externos. Por eso, por defecto no incluyen
+la IP de origen, solo "IP en el panel"; se puede activar con
+`NOTIFY_INCLUDE_IPS`. En ntfy.sh publico, cualquiera que sepa el nombre del
+tema lee los mensajes: usa un nombre dificil de adivinar o tu propio
+servidor.
+
 ## Auditoria de la IA local con Claude (servidor MCP, sin API key)
 
 `tools/mcp_audit/server.py` es un servidor MCP que corre en tu PC, la que
