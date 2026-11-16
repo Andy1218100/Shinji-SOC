@@ -178,6 +178,22 @@ arco animado desde el origen hasta ese host. Sin GeoIP configurado, o con
 hosts en IP privada, los eventos siguen apareciendo en la lista, solo que
 sin punto ni arco en el mapa -- nunca se inventa una ubicacion.
 
+**Probar el mapa con ataques simulados.** `server/scripts/simulate_attack.py`
+crea un host ficticio ("Simulacion de ataques", ubicado en Chile) y le manda
+por la API del agente oleadas de escaneos web y fuerza bruta SSH/Proxmox desde
+IPs publicas de otros paises elegidas al azar en la base GeoLite2. No sale
+trafico hacia esas IPs y no toca ningun host real: aprobar un bloqueo sobre
+el host ficticio no ejecuta nada. Cada oleada (cada 3 minutos) dispara
+tambien el resumen de la IA local, asi que mientras corre Ollama trabaja mas.
+
+```bash
+docker compose exec -d server sh -c "python -m scripts.simulate_attack >> /tmp/attack-sim.log 2>&1"
+docker compose exec server python -m scripts.simulate_attack --stop    # detener
+docker compose exec server python -m scripts.simulate_attack --clean   # detener y borrar el host y sus datos
+```
+
+El bucle se corta si se reinicia o recrea el contenedor del servidor.
+
 ## Acceso: usuarios, contrasenas y MFA
 
 No hay mas clave compartida: cada persona tiene su propia cuenta
