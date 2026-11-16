@@ -509,6 +509,41 @@ services:
     cpus: "4"
 ```
 
+## Quitar el agente de un host
+
+`install.sh` deja instalado el comando `prox-secure-uninstall`. En el host,
+como root:
+
+```bash
+prox-secure-uninstall --dry-run
+```
+
+```bash
+prox-secure-uninstall
+```
+
+El primero muestra lo que haria, sin cambiar nada. El segundo pide
+escribir QUITAR; con `--yes` no pregunta. Quita todo lo que puso
+`install.sh`:
+
+- el servicio y `/opt/prox-secure-agent`, incluida la API key;
+- el sudoers del agente;
+- el jail `proxsecure` de fail2ban (las IPs bloqueadas desde el panel
+  quedan desbloqueadas);
+- los permisos de lectura que se dieron con "Dar acceso" (las ACL de
+  otros usuarios no se tocan);
+- el usuario `prox-secure`.
+
+No quita los paquetes (`python3-venv`, `fail2ban`, `acl`, `sudo`), porque
+pueden estar en uso por otras cosas. Correrlo de nuevo no hace nada.
+
+Hosts instalados antes de que existiera el comando: copia
+`agent/uninstall.sh` y corre `sudo bash /tmp/uninstall.sh`.
+
+El host y su historial siguen en el panel. Se borran desde Monitoreo > el
+host > Eliminar, que pide MFA. Para volver a agregarlo, se crea de nuevo
+en el panel (genera otra API key) y se corre `install.sh`.
+
 ## HTTPS
 
 El contenedor `caddy` pone HTTPS delante del servidor (`caddy/Caddyfile`).

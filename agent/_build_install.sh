@@ -98,6 +98,9 @@ emit_file "process_watch.py"     '$INSTALL_DIR/process_watch.py'
 emit_file "requirements.txt"     '$INSTALL_DIR/requirements.txt'
 emit_file "kill_process.sh"      '$INSTALL_DIR/kill_process.sh' 755
 emit_file "grant_log_access.sh"  '$INSTALL_DIR/grant_log_access.sh' 755
+# Desinstalador como comando del sistema (prox-secure-uninstall): queda fuera
+# de $INSTALL_DIR porque ese directorio es lo que borra.
+emit_file "uninstall.sh"         '/usr/local/sbin/prox-secure-uninstall' 755
 
 cat >> "$OUT" <<'MID_EOF'
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
