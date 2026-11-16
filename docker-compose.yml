@@ -51,6 +51,23 @@ services:
     volumes:
       - ./server:/app
       - ./.env:/config/.env
+      # Lectura del estado de los respaldos y pedido de "Respaldar ahora".
+      - ./backups:/backups
+
+  backup:
+    # Misma imagen que la base: su pg_dump es de la misma version.
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    env_file:
+      - .env
+    entrypoint: ["/bin/sh", "/scripts/backup_loop.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./scripts/backup_loop.sh:/scripts/backup_loop.sh:ro
+      - ./backups:/backups
+      - ./.env:/config/.env:ro
 
 volumes:
   db_data:

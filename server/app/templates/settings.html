@@ -74,6 +74,7 @@ function render() {
           </tr>`).join('')}
         </tbody>
       </table>
+      ${g === 'Respaldos' ? `<div id="backups-panel" style="margin-top: var(--space-3);"><p style="color: var(--text-muted);">Cargando respaldos...</p></div>` : ''}
       ${g === 'Notificaciones' ? `
         <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
           <button class="sm" type="button" id="notify-test-btn">Enviar notificacion de prueba</button>
@@ -115,6 +116,7 @@ function render() {
   wrap.querySelectorAll('[data-generate]').forEach(btn => btn.addEventListener('click', () => generate(btn.dataset.generate)));
   document.getElementById('geoip-btn')?.addEventListener('click', downloadGeoip);
   document.getElementById('notify-test-btn')?.addEventListener('click', notifyTest);
+  loadBackups();
 }
 
 function updateSaveBar() {
@@ -172,6 +174,42 @@ async function generate(key) {
   if (data.logged_out) { window.location.href = '/login'; return; }
   toast('Token nuevo guardado.', 'success');
   load();
+}
+
+function fmtSize(b) { return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`; }
+
+async function loadBackups() {
+  const el = document.getElementById('backups-panel');
+  if (!el) return;
+  const res = await fetch('/api/v1/config/backups');
+  if (!res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el estado de los respaldos.</p>'; return; }
+  const b = await res.json();
+  if (!b.available) {
+    el.innerHTML = '<p class="login-error">El servidor no ve la carpeta ./backups: falta el contenedor de respaldo o el montaje en docker-compose.yml.</p>';
+    return;
+  }
+  const la = b.last_attempt || {};
+  const state = b.stale
+    ? `<span class="badge crit">${b.last_age_hours == null ? 'sin respaldos todavia' : `ultimo hace ${b.last_age_hours} h: atrasado`}</span>`
+    : `<span class="badge ok">ultimo hace ${b.last_age_hours} h</span>`;
+  const err = la.result === 'error' ? `<p class="login-error">Ultimo intento fallido (${esc(la.last_attempt)}): ${esc(la.message)}</p>` : '';
+  const rows = b.backups.slice(0, 10).map(x => `<tr><td><code>${esc(x.name)}</code></td><td>${fmtSize(x.size)}</td><td>${new Date(x.created).toLocaleString()}</td></tr>`).join('');
+  el.innerHTML = `
+    <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
+      ${state}
+      <span style="color: var(--text-muted); font-size: var(--text-xs);">${b.backups.length} respaldos, ${fmtSize(b.total_size)} en total</span>
+      <button class="sm" type="button" id="backup-now-btn" ${b.pending_request ? 'disabled' : ''}>${b.pending_request ? 'Respaldo pedido...' : 'Respaldar ahora'}</button>
+    </div>
+    ${err}
+    ${rows ? `<table class="data" style="margin-top: var(--space-3);"><thead><tr><th>Archivo</th><th>Tamano</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+    <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">
+      Quedan en la carpeta <code>backups/</code> del proyecto. Contienen hashes de contrasenas, secretos MFA y API keys: copialos fuera de este servidor a un lugar seguro.
+      Para restaurar: <code>bash scripts/restore_backup.sh backups/&lt;archivo&gt;</code>.
+    </p>`;
+  document.getElementById('backup-now-btn')?.addEventListener('click', async () => {
+    const r = await adminAction('/api/v1/config/backups/run');
+    if (r) { toast('Respaldo pedido: empieza en menos de 30 segundos.', 'success'); loadBackups(); setTimeout(loadBackups, 35000); }
+  });
 }
 
 async function notifyTest() {

@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import require_superadmin
 from app.models.user import User
-from app.services import app_settings, auth, notify
+from app.services import app_settings, auth, backups, notify
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
 logger = logging.getLogger("config")
@@ -92,3 +92,17 @@ async def notify_test():
         "warning",
     )
     return {"results": results}
+
+
+@router.get("/backups", dependencies=[Depends(require_superadmin)])
+async def get_backups():
+    return backups.status()
+
+
+@router.post("/backups/run")
+async def run_backup(admin: User = Depends(require_superadmin)):
+    if not backups.available():
+        raise HTTPException(status_code=409, detail="El servidor no ve la carpeta de respaldos: falta montar ./backups en docker-compose.yml")
+    backups.request_now()
+    logger.info("Respaldo pedido por %s", admin.username)
+    return {"status": "ok"}

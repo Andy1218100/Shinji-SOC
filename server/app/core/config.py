@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     smtp_to: str = ""
     smtp_starttls: bool = True
 
+    # Respaldos (los hace el contenedor "backup"; ver scripts/backup_loop.sh)
+    backup_interval_hours: int = 24
+    backup_keep: int = 14
+
     # Token del auditor externo (servidor MCP en la PC del admin, ver
     # tools/mcp_audit). Vacio = los endpoints /api/v1/audit/* quedan apagados.
     audit_api_token: str = ""

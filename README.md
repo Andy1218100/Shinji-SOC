@@ -526,6 +526,44 @@ Como funciona:
   puestos dejan la plataforma sin base de datos o sin IA, y no se podrian
   arreglar desde la propia pagina.
 
+## Respaldos
+
+El contenedor `backup` respalda la base con `pg_dump -Fc` cada
+`BACKUP_INTERVAL_HOURS` (24 por defecto) en la carpeta `backups/` del
+proyecto, y conserva los ultimos `BACKUP_KEEP` (14). Usa la misma imagen
+que la base, asi que su `pg_dump` es de la misma version. Es el metodo que
+indica TimescaleDB:
+https://docs.timescale.com/self-hosted/latest/backup-and-restore/logical-backup
+
+En Configuracion > Respaldos se ve el estado y la lista de copias, se
+ajustan intervalo y cantidad, y esta el boton **Respaldar ahora**. Si el
+ultimo respaldo tiene mas del doble del intervalo, llega una notificacion
+como maximo una vez al dia.
+
+**Los respaldos contienen hashes de contrasenas, secretos MFA y las API
+keys de los hosts.** Copialos fuera de este servidor (otro disco, otra
+maquina) a un lugar seguro. Un respaldo en el mismo disco no sirve si se
+pierde el disco.
+
+Restaurar:
+
+```bash
+bash scripts/restore_backup.sh backups/proxsecure-AAAAMMDD-HHMMSS.dump
+```
+
+El script hace estos pasos:
+
+1. Pide confirmacion.
+2. Guarda un respaldo de seguridad del estado actual (`pre-restore-*.dump`).
+3. Recrea la base con `timescaledb_pre_restore()`, `pg_restore` (sin `-j`),
+   `timescaledb_post_restore()` y `ANALYZE`.
+4. Vuelve a levantar todo.
+
+Restaurar con una version de TimescaleDB distinta a la del respaldo puede
+fallar, porque la imagen es `latest-pg16`. `pg_dump` avisa de "circular
+foreign-key constraints" en una tabla interna de TimescaleDB; con un
+respaldo completo, como este, la restauracion funciona (probado).
+
 ## Notificaciones
 
 Avisos por **Telegram**, **ntfy** y/o **correo (SMTP)**. Se configuran en

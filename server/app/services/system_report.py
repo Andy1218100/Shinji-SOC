@@ -138,4 +138,10 @@ async def run_forever() -> None:
             await retry_missing_summaries()
         except Exception:
             logger.exception("Fallo el reintento de informes de IA")
+        try:
+            from app.services import backups
+
+            await backups.check_stale()
+        except Exception:
+            logger.exception("Fallo la revision de respaldos")
         await asyncio.sleep(RETRY_INTERVAL_SECONDS)
