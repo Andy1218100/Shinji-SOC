@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Configuracion · Prox Secure{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Configuracion</h1>
+  <p>Lo que antes habia que editar a mano en el <code>.env</code>. Los cambios se guardan en ese mismo archivo y se aplican sin reiniciar.</p>
+  <p style="font-size: var(--text-xs); color: var(--text-muted);">
+    Guardar pide el codigo de tu app de autenticacion. Las claves y tokens nunca se muestran: solo si estan configurados y como terminan.
+  </p>
+</div>
+
+<div id="config-wrap"><div class="empty-state"><p>Cargando...</p></div></div>
+
+<section class="panel" id="save-panel" style="position: sticky; bottom: 0; display: none; border: 1px solid var(--accent);">
+  <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
+    <strong id="save-summary"></strong>
+    <input type="text" id="save-mfa" placeholder="Codigo MFA (6 digitos)" inputmode="numeric" autocomplete="one-time-code" style="width: 190px;" />
+    <button class="primary" id="save-btn" type="button">Guardar cambios</button>
+    <button class="ghost" id="discard-btn" type="button">Descartar</button>
+  </div>
+  <p class="login-error" id="save-error"></p>
+</section>
+
+<script>
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+let config = null;
+const pending = {};          // key -> nuevo valor
+let ollamaModels = [];
+
+function fieldInput(f) {
+  const id = `f-${f.key}`;
+  const changed = f.key in pending;
+  const val = changed ? pending[f.key] : f.value;
+  if (f.kind === 'bool') {
+    return `<label style="display:flex; gap: var(--space-2); align-items:center;">
+      <input type="checkbox" id="${id}" data-key="${f.key}" ${val ? 'checked' : ''}/> Activado</label>`;
+  }
+  if (f.kind === 'choice') {
+    return `<select id="${id}" data-key="${f.key}">${f.choices.map(c => `<option value="${esc(c)}" ${c === val ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+  }
+  if (f.kind === 'secret') {
+    const status = f.configured ? `<span class="badge ok">${esc(f.hint || 'configurada')}</span>` : `<span class="badge neutral">sin configurar</span>`;
+    const gen = f.generable ? `<button class="sm ghost" type="button" data-generate="${f.key}">Generar nuevo</button>` : '';
+    const clear = f.configured && !f.generable ? `<button class="sm ghost" type="button" data-clear="${f.key}">Quitar</button>` : '';
+    return `<div style="display:flex; gap: var(--space-2); align-items:center; flex-wrap: wrap;">
+      ${status}
+      <input type="password" id="${id}" data-key="${f.key}" placeholder="${f.configured ? 'Nuevo valor (dejar vacio para no cambiar)' : 'Pegar valor'}"
+        value="${changed ? esc(pending[f.key]) : ''}" autocomplete="off" style="min-width: 280px;" />
+      ${gen}${clear}</div>`;
+  }
+  const attrs = f.kind === 'int' ? `type="number" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''}` : 'type="text"';
+  const list = f.key === 'OLLAMA_MODEL' ? 'list="ollama-models"' : '';
+  return `<input ${attrs} ${list} id="${id}" data-key="${f.key}" value="${esc(val ?? '')}" style="min-width: 220px;" />`;
+}
+
+function render() {
+  const wrap = document.getElementById('config-wrap');
+  if (!config.env_file_available) {
+    wrap.innerHTML = `<section class="panel" style="border:1px solid var(--warn);"><p>El servidor no puede escribir <code>${esc(config.env_file)}</code>. Falta montar el <code>.env</code> en <code>docker-compose.yml</code> (<code>./.env:/config/.env</code>) y recrear el servidor.</p></section>`;
+    return;
+  }
+  const groups = [...new Set(config.fields.map(f => f.group))];
+  const geo = config.geoip;
+  wrap.innerHTML = groups.map(g => `
+    <section class="panel">
+      <h2>${esc(g)}</h2>
+      <table class="data">
+        <colgroup><col style="width:28%"><col style="width:42%"><col style="width:30%"></colgroup>
+        <tbody>${config.fields.filter(f => f.group === g).map(f => `
+          <tr>
+            <td><strong>${esc(f.label)}</strong><div style="color: var(--text-muted); font-size: var(--text-xs);"><code>${esc(f.key)}</code> · ${esc(f.source)}</div></td>
+            <td>${fieldInput(f)}${f.key in pending ? ' <span class="badge warn">sin guardar</span>' : ''}</td>
+            <td style="color: var(--text-muted); font-size: var(--text-xs);">${esc(f.help)}<div>Se aplica: ${esc(f.applies)}</div></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+      ${g.startsWith('Mapa') ? `
+        <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
+          <button class="sm" type="button" id="geoip-btn">Descargar base GeoIP</button>
+          <span style="color: var(--text-muted); font-size: var(--text-xs);">${geo.configured ? `Base instalada, actualizada el ${new Date(geo.updated * 1000).toLocaleString()}` : 'Base no instalada: el mapa de ataques no tiene coordenadas.'} Guarda primero el Account ID y la License Key.</span>
+        </div>` : ''}
+    </section>`).join('') + `
+    <section class="panel">
+      <h2>Sesiones activas</h2>
+      <p style="color: var(--text-muted); font-size: var(--text-sm);">Genera una clave de sesion nueva: se cierran todas las sesiones abiertas, incluida la tuya. Util si sospechas que alguien tiene una sesion robada.</p>
+      <button class="sm ghost" type="button" data-generate="SESSION_SECRET_KEY">Cerrar todas las sesiones</button>
+    </section>
+    <section class="panel">
+      <h2>Solo en el .env</h2>
+      <p style="color: var(--text-muted); font-size: var(--text-sm);">${config.read_only.map(k => `<code>${esc(k)}</code>`).join(', ')}: son de infraestructura (base de datos, conexion a Ollama). Mal puestos dejan la plataforma sin base de datos o sin IA, y no se podrian arreglar desde esta pagina. Se cambian editando el <code>.env</code> y recreando los contenedores.</p>
+    </section>
+    <datalist id="ollama-models">${ollamaModels.map(m => `<option value="${esc(m)}">`).join('')}</datalist>`;
+
+  wrap.querySelectorAll('[data-key]').forEach(el => {
+    const ev = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input';
+    el.addEventListener(ev, () => {
+      const f = config.fields.find(x => x.key === el.dataset.key);
+      const v = el.type === 'checkbox' ? el.checked : el.value;
+      if (f.kind === 'secret' && v === '') delete pending[f.key];
+      else if (f.kind !== 'secret' && String(v) === String(f.value)) delete pending[f.key];
+      else pending[f.key] = v;
+      updateSaveBar();
+    });
+  });
+  wrap.querySelectorAll('[data-clear]').forEach(btn => btn.addEventListener('click', () => {
+    pending[btn.dataset.clear] = '';
+    toast('Se va a quitar al guardar.', 'default');
+    updateSaveBar();
+  }));
+  wrap.querySelectorAll('[data-generate]').forEach(btn => btn.addEventListener('click', () => generate(btn.dataset.generate)));
+  document.getElementById('geoip-btn')?.addEventListener('click', downloadGeoip);
+}
+
+function updateSaveBar() {
+  const n = Object.keys(pending).length;
+  document.getElementById('save-panel').style.display = n ? 'block' : 'none';
+  document.getElementById('save-summary').textContent = `${n} cambio${n === 1 ? '' : 's'} sin guardar`;
+  document.getElementById('save-error').textContent = '';
+}
+
+async function load() {
+  const res = await fetch('/api/v1/config');
+  if (!res.ok) { document.getElementById('config-wrap').innerHTML = '<div class="empty-state"><p>No se pudo cargar la configuracion.</p></div>'; return; }
+  config = await res.json();
+  try {
+    const m = await fetch('/api/v1/config/ollama-models');
+    if (m.ok) ollamaModels = (await m.json()).models;
+  } catch (e) { /* la lista es solo una ayuda */ }
+  render();
+}
+
+function askMfa(message) {
+  const code = (prompt(`${message}\n\nCodigo de tu app de autenticacion:`) || '').trim();
+  return code || null;
+}
+
+async function save() {
+  const code = document.getElementById('save-mfa').value.trim();
+  const errEl = document.getElementById('save-error');
+  if (!code) { errEl.textContent = 'Ingresa el codigo MFA.'; return; }
+  const res = await fetch('/api/v1/config', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mfa_code: code, values: pending }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { errEl.textContent = data.detail || `Error ${res.status}`; return; }
+  for (const k of Object.keys(pending)) delete pending[k];
+  document.getElementById('save-mfa').value = '';
+  config = data.config;
+  updateSaveBar();
+  render();
+  toast(`Guardado: ${data.changed.length} cambio${data.changed.length === 1 ? '' : 's'}.`, 'success');
+}
+
+async function generate(key) {
+  const warning = key === 'SESSION_SECRET_KEY'
+    ? 'Se cerraran todas las sesiones, incluida la tuya.'
+    : 'Se genera un token nuevo y el anterior deja de servir. El servidor MCP lo lee del .env, asi que sigue funcionando.';
+  const code = askMfa(warning);
+  if (!code) return;
+  const res = await fetch(`/api/v1/config/generate/${key}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mfa_code: code }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { toast(data.detail || `Error ${res.status}`, 'error'); return; }
+  if (data.logged_out) { window.location.href = '/login'; return; }
+  toast('Token nuevo guardado.', 'success');
+  load();
+}
+
+async function downloadGeoip() {
+  const btn = document.getElementById('geoip-btn');
+  btn.disabled = true; btn.textContent = 'Descargando...';
+  const res = await adminAction('/api/v1/config/geoip-download');
+  btn.disabled = false; btn.textContent = 'Descargar base GeoIP';
+  if (res) { toast('Base GeoIP actualizada.', 'success'); load(); }
+}
+
+document.getElementById('save-btn').addEventListener('click', save);
+document.getElementById('discard-btn').addEventListener('click', () => {
+  for (const k of Object.keys(pending)) delete pending[k];
+  updateSaveBar(); render();
+});
+window.addEventListener('beforeunload', (e) => { if (Object.keys(pending).length) { e.preventDefault(); e.returnValue = ''; } });
+load();
+</script>
+{% endblock %}

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # ataques simplemente no tendra coordenadas hasta que se descargue.
     geoip_db_path: str = "data/GeoLite2-City.mmdb"
     maxmind_license_key: str | None = None
+    maxmind_account_id: str | None = None
 
     # Motor IDS (heuristico, no es un modelo de ML entrenado)
     ids_window_seconds: int = 60

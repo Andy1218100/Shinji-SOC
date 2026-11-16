@@ -37,6 +37,8 @@ services:
     env_file:
       - .env
     environment:
+      # El .env montado (abajo) lo reescribe la pagina de Configuracion.
+      PROX_SECURE_ENV_FILE: /config/.env
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-proxsecure}:${POSTGRES_PASSWORD:-proxsecure}@db:5432/${POSTGRES_DB:-proxsecure}
       OLLAMA_HOST: http://ollama:11434
     depends_on:
@@ -48,6 +50,7 @@ services:
       - "8000:8000"
     volumes:
       - ./server:/app
+      - ./.env:/config/.env
 
 volumes:
   db_data:

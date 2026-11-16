@@ -467,6 +467,33 @@ services:
     cpus: "4"
 ```
 
+## Configuracion desde la pagina
+
+`/settings` (solo admin) edita lo que antes habia que cambiar a mano en el
+`.env`:
+
+- **IA:** motor, modelos y API key de Anthropic.
+- **Auditoria:** el token del MCP.
+- **MaxMind:** credenciales, con un boton que descarga la base GeoIP.
+- **IDS:** umbrales.
+- **Escaneos:** intervalos.
+- **Sesiones:** duracion, cookies seguras e intentos de login. Hay ademas
+  un boton para cerrar todas las sesiones.
+
+Como funciona:
+
+- **Escritura.** La pagina reescribe el mismo `.env`, montado en el
+  servidor como `/config/.env` (ver `docker-compose.yml`). Conserva los
+  comentarios y el orden, y aplica cada valor en caliente, sin reiniciar.
+  El servidor MCP y `scripts/update_geoip_db.sh` siguen leyendo ese archivo.
+- **Seguridad.** Guardar o regenerar claves pide el codigo MFA. Las claves
+  nunca se devuelven al navegador: solo si estan configuradas y sus
+  ultimos 4 caracteres. El log registra quien cambio que clave, pero no
+  el valor.
+- **Solo en el `.env`:** `POSTGRES_*`, `DATABASE_URL` y `OLLAMA_HOST`. Mal
+  puestos dejan la plataforma sin base de datos o sin IA, y no se podrian
+  arreglar desde la propia pagina.
+
 ## Auditoria de la IA local con Claude (servidor MCP, sin API key)
 
 `tools/mcp_audit/server.py` es un servidor MCP que corre en tu PC, la que

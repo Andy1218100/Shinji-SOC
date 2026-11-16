@@ -38,6 +38,10 @@
           {{ icon("users") }}
           <span class="label">Usuarios</span>
         </a>
+        <a class="nav-link {{ 'active' if active_nav == 'configuracion' else '' }}" href="/settings">
+          {{ icon("settings") }}
+          <span class="label">Configuracion</span>
+        </a>
         {% endif %}
       </nav>
       <div class="sidebar-footer">

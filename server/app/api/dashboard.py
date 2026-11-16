@@ -110,6 +110,11 @@ async def vulnerabilities_page(request: Request, user: User = Depends(get_curren
     )
 
 
+@router.get("/settings")
+async def settings_page(request: Request, user: User = Depends(require_admin)):
+    return templates.TemplateResponse("settings.html", {"request": request, "active_nav": "configuracion", "user": user})
+
+
 @router.get("/users")
 async def users_page(request: Request, user: User = Depends(require_admin)):
     return templates.TemplateResponse(
