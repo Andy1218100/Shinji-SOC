@@ -12,12 +12,18 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
-from app.services import ai, osv
+from app.services import ai, audit, osv
 
 logger = logging.getLogger("vuln_scan")
 
 
 PROMPT_EXAMPLES = 5
+# Reglas que dejo el auditor externo (ver services/audit.py), cargadas al
+# empezar cada escaneo. Pocas y cortas: cada una alarga el prompt y en CPU
+# eso son segundos por recomendacion.
+MAX_GLOBAL_RULES = 5
+MAX_PACKAGE_RULES = 3
+_active_rules: list = []
 
 
 FALLBACK_NOTE = "(Recomendacion generada sin IA: el modelo no dio una respuesta valida.)"
@@ -159,6 +165,18 @@ def _build_prompt(host: Host, package: SourcePackage, all_findings: list[Vulnera
         f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica"
         + (f" (y otras {ignored} que Debian clasifica como sin importancia, que no hace falta tratar)" if ignored else "")
         + f". Algunas: {example_lines}. {status} No inventes numeros de version, CVEs ni datos que no te di."
+        + _rules_text(package.name)
+    )
+
+
+def _rules_text(package_name: str) -> str:
+    general = [r.rule for r in _active_rules if r.package_name is None][:MAX_GLOBAL_RULES]
+    specific = [r.rule for r in _active_rules if r.package_name == package_name][:MAX_PACKAGE_RULES]
+    rules = specific + general
+    if not rules:
+        return ""
+    return " Reglas de un auditor que reviso respuestas anteriores (respetalas): " + " ".join(
+        f"({i}) {r}" for i, r in enumerate(rules, start=1)
     )
 
 
@@ -209,6 +227,9 @@ def _needs_new_recommendation(host: Host, package: SourcePackage, findings: list
     if None in recs or len(recs) > 1:
         return True
     rec = next(iter(recs))
+    if any(f.rec_source == "claude" for f in findings):
+        # Corregida por el auditor: se respeta hasta que cambien los CVEs.
+        return False
     fixed = _fixed_recommendation(package, findings)
     if fixed is not None:
         return rec != fixed
@@ -245,6 +266,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
         logger.exception("Fallo la consulta a OSV.dev para %s", host.name)
         return 0
 
+    _active_rules[:] = await audit.active_rules(session)
     new_findings = 0
     now = datetime.now(timezone.utc)
     existing = {
@@ -320,8 +342,10 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
         if pkg_findings and (added or dropped or _needs_new_recommendation(host, package, pkg_findings)):
             rec = await _generate_recommendation(host, package, pkg_findings)
             if rec:
+                source = "fija" if rec.endswith(FIXED_NOTE) or rec.endswith(FALLBACK_NOTE) else "ia_local"
                 for f in pkg_findings:
-                    f.ai_recommendation = rec
+                    f.ai_recommendation, f.rec_source = rec, source
+                    f.audited_at, f.audit_note = None, None
                 await session.commit()
 
     # Lo que OSV ya no reporta para la version instalada ahora (paquete

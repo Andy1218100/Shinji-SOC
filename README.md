@@ -467,6 +467,46 @@ services:
     cpus: "4"
 ```
 
+## Auditoria de la IA local con Claude (servidor MCP, sin API key)
+
+`tools/mcp_audit/server.py` es un servidor MCP que corre en tu PC, la que
+tiene Claude Code con tu suscripcion. Solo usa la biblioteca estandar de
+Python. El ciclo de mejora:
+
+1. **Informe.** `obtener_informe` trae un lote compacto (~20 paquetes,
+   unos 4-5 mil tokens) de recomendaciones de la IA local sin auditar,
+   con los datos de OSV para juzgarlas. Lo arma codigo, no la IA local,
+   para que sea exacto y no gaste CPU.
+2. **Auditoria.** Claude las revisa con los criterios que trae la propia
+   herramienta.
+3. **Correcciones.** `enviar_auditoria` guarda un veredicto por paquete.
+   Las correcciones reemplazan el texto y se marcan "corregida por Claude"
+   en el panel. El servidor rechaza las que citen versiones o CVEs que no
+   estan en los datos.
+4. **Reglas.** Claude puede dejar reglas generales cortas (hasta 50
+   activas). La IA local las agrega a su prompt en las proximas
+   recomendaciones: asi mejora sin reentrenar el modelo.
+
+**Datos minimizados**, con la Ley 21.719 de Chile en mente (no es una
+opinion legal): los hosts van como H1, H2... Sin nombres de host, IPs,
+usuarios, rutas de `/home`, logs ni lineas de comando. Solo paquetes,
+versiones, CVEs con su resumen publico y el texto de la IA local.
+
+**Activar:**
+
+1. El servidor necesita `AUDIT_API_TOKEN` en `.env`. Sin ese token,
+   `/api/v1/audit/*` responde 403.
+2. Registra el servidor MCP en Claude Code. Lee el token del `.env` del
+   proyecto:
+
+```bash
+claude mcp add --scope user prox-secure-audit -- python "C:/ruta/a/prox secure/tools/mcp_audit/server.py"
+```
+
+3. En Claude Code, pide por ejemplo "audita las recomendaciones de Prox
+   Secure con prox-secure-audit". Cada lote consume parte del limite de
+   tu suscripcion: conviene ir de a un lote.
+
 ## Desarrollo local sin Docker (opcional)
 
 ```bash

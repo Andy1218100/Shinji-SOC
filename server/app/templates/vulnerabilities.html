@@ -22,6 +22,7 @@
 
 <section class="panel">
   <h2>Vulnerabilidades encontradas</h2>
+  <div class="range-tabs" id="host-tabs"></div>
   <div id="vulns-wrap">
     <div class="empty-state"><p>Cargando...</p></div>
   </div>
@@ -79,6 +80,28 @@ async function loadHostNames() {
 const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
 // Secciones colapsables: su estado sobrevive al refresco de 30s.
 const openSections = new Set();
+// Pestana de host elegida: se recuerda en este navegador (si se puede).
+let selectedHost = null;
+try { selectedHost = localStorage.getItem('vulnsHost'); } catch (e) { /* sin storage */ }
+
+function renderHostTabs(findings) {
+  const tabsEl = document.getElementById('host-tabs');
+  const ids = [...new Set([...Object.keys(hostNames), ...findings.map(f => f.host_id)])]
+    .sort((a, b) => String(hostNames[a] || a).localeCompare(String(hostNames[b] || b)));
+  if (!ids.includes(selectedHost)) selectedHost = ids[0] || null;
+  if (ids.length === 0) { tabsEl.innerHTML = ''; return; }
+  const count = (id) => findings.filter(f => f.host_id === id && f.status !== 'resolved' && f.fixed_version && !f.not_applicable).length;
+  const total = (id) => findings.filter(f => f.host_id === id && f.status !== 'resolved').length;
+  tabsEl.innerHTML = `<div class="range-tab-group">${ids.map(id => `
+    <button type="button" class="range-tab ${id === selectedHost ? 'active' : ''}" data-host-tab="${esc(id)}"
+      title="${total(id)} abiertas, ${count(id)} con solucion">${esc(hostNames[id] || id)}${count(id) ? ` · ${count(id)}` : ''}</button>`).join('')}</div>
+    <span class="range-meta">${total(selectedHost)} abiertas en este host · ${count(selectedHost)} con solucion</span>`;
+  tabsEl.querySelectorAll('[data-host-tab]').forEach(btn => btn.addEventListener('click', () => {
+    selectedHost = btn.dataset.hostTab;
+    try { localStorage.setItem('vulnsHost', selectedHost); } catch (e) { /* sin storage */ }
+    loadVulnerabilities();
+  }));
+}
 let scanStatus = {};
 let scanPollTimer = null;
 
@@ -162,6 +185,14 @@ async function loadInventoryStatus() {
   }));
 }
 
+// Marca de la auditoria externa (Claude via el servidor MCP).
+function auditBadge(f) {
+  const note = f.audit_note ? ` title="${esc(f.audit_note)}"` : '';
+  if (f.rec_source === 'claude') return `<div><span class="badge ok"${note}>corregida por Claude</span></div>`;
+  if (f.audited_at) return `<div><span class="badge neutral"${note}>revisada por Claude</span></div>`;
+  return '';
+}
+
 // Seccion colapsable: titulo, explicacion y contenido (cerrada por defecto).
 function section(id, title, note, content) {
   const open = openSections.has(id);
@@ -188,6 +219,8 @@ async function loadVulnerabilities() {
     return;
   }
 
+  renderHostTabs(findings);
+  findings = findings.filter(f => f.host_id === selectedHost);
   const resolved = findings.filter(f => f.status === 'resolved')
     .sort((a, b) => String(b.resolved_at || '').localeCompare(String(a.resolved_at || '')));
   const active = findings.filter(f => f.status !== 'resolved');
@@ -260,7 +293,7 @@ async function loadVulnerabilities() {
           <div style="color: var(--text-muted); font-size: var(--text-xs);">${breakdown}</div>
           <button class="sm ghost" data-toggle-group="${esc(key)}">${isOpen ? 'Ocultar CVEs' : 'Ver CVEs'}</button>
         </td>
-        <td>${rec ? esc(rec) : '<span style="color:var(--text-muted)">(pendiente)</span>'}</td>
+        <td>${rec ? esc(rec) : '<span style="color:var(--text-muted)">(pendiente)</span>'}${auditBadge(first)}</td>
         <td>${fixedText}</td>
         <td></td>
       </tr>${cveRows}`;

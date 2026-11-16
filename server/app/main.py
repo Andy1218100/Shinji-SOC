@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ai, alerts, auth, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
+from app.api import ai, alerts, audit, auth, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
 from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, engine, ensure_columns, ensure_hypertables
 from app.services.alerting import run_forever as alerting_run_forever
@@ -78,3 +78,4 @@ app.include_router(commands.router)
 app.include_router(auth.router)
 app.include_router(vulnerabilities.router)
 app.include_router(users.router)
+app.include_router(audit.router)

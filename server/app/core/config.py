@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     # que reporta el agente. Una vez al dia por defecto.
     vuln_scan_interval_seconds: int = 86400
 
+    # Token del auditor externo (servidor MCP en la PC del admin, ver
+    # tools/mcp_audit). Vacio = los endpoints /api/v1/audit/* quedan apagados.
+    audit_api_token: str = ""
+
 
 settings = Settings()
