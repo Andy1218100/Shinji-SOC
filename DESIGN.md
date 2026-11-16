@@ -248,11 +248,10 @@ an `accent-bg`-filled, `accent`-bordered circle with a tabular-nums
 count, no severity-based coloring (a cluster mixes severities, so it
 reads as "N events here", not a status). Individual markers below
 cluster threshold keep per-severity color (`crit`/`warn`) as circle
-markers. Tiles are plain OSM, darkened with a CSS `filter` on the tile
-pane only (`invert(1) hue-rotate(180deg) brightness(.92) contrast(.92)
-saturate(.9)`) — chosen over a hosted dark-tile provider because one
-(CartoDB's free `dark_all`) started requiring an API key mid-project;
-a CSS filter has no such dependency to break.
+markers. Tiles are Esri's Dark Gray Canvas base, used as-is with no CSS
+filter. Plain OSM tiles were dropped because tile.openstreetmap.org
+started answering "Access blocked" (403), and CartoDB's free `dark_all`
+started requiring an API key.
 
 ### Cards / Panels
 - **Corner:** 14px.
@@ -265,6 +264,29 @@ a CSS filter has no such dependency to break.
 - **Focus:** 2px accent outline, inset by 1px, border switches to accent.
 - **Error:** handled by an adjacent inline message in crit text, not by
   recoloring the input itself (see login's `.login-error`).
+- **Coverage:** `select`, `number`, `search`, `email`, `url` and `textarea`
+  share the text-input surface; `select` gets its own chevron. Checkboxes
+  take `accent-color`, and on/off settings use the `.switch` (a checkbox
+  with `role="switch"`, accent track when on) with an "Activado" /
+  "Desactivado" word beside it. No control ships with the browser's gray.
+
+### Settings form (settings.html)
+- **Structure:** sticky section nav on the left (search box on top,
+  active section in accent, a warn dot on sections with unsaved
+  changes); it becomes a sticky horizontal strip under 860px. A status
+  panel opens the page (dot + label per subsystem, each a link to its
+  section) so "will alerts reach me / are backups current" is answered
+  first.
+- **Rows:** `.setting-row` grid, label + help + muted `.env` key on the
+  left, control on the right; stacked under 640px. The label is a real
+  `<label for>` and the help is wired with `aria-describedby`. "When it
+  applies" shows only when it is not immediate.
+- **Units:** numbers carry a unit suffix (`s`, `h`, `dias`, or a word)
+  and a live human equivalent ("= 10 min"); the catalog label never
+  repeats the unit.
+- **Sensitive confirmations:** inline panel under the control with an
+  MFA field, never `prompt()`. Field errors land under the field that
+  failed, the save bar only says which one.
 
 ### Navigation
 - **Sidebar nav-link:** icon (18px) + label, surface-2 hover background,

@@ -3,54 +3,242 @@
 {% block content %}
 <div class="page-header">
   <h1>Configuracion</h1>
-  <p>Lo que antes habia que editar a mano en el <code>.env</code>. Los cambios se guardan en ese mismo archivo y se aplican sin reiniciar.</p>
-  <p style="font-size: var(--text-xs); color: var(--text-muted);">
-    Guardar pide el codigo de tu app de autenticacion. Las claves y tokens nunca se muestran: solo si estan configurados y como terminan.
-  </p>
+  <p>Lo que antes habia que editar a mano en el <code>.env</code>. Se guarda en ese mismo archivo y se aplica sin reiniciar; guardar pide el codigo de tu app de autenticacion.</p>
 </div>
 
 <div id="config-wrap"><div class="empty-state"><p>Cargando...</p></div></div>
 
-<section class="panel" id="save-panel" style="position: sticky; bottom: 0; display: none; border: 1px solid var(--accent);">
-  <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
+<div class="save-bar" id="save-bar" hidden role="region" aria-label="Cambios sin guardar">
+  <div class="save-bar-summary">
     <strong id="save-summary"></strong>
-    <input type="text" id="save-mfa" placeholder="Codigo MFA (6 digitos)" inputmode="numeric" autocomplete="one-time-code" style="width: 190px;" />
-    <button class="primary" id="save-btn" type="button">Guardar cambios</button>
-    <button class="ghost" id="discard-btn" type="button">Descartar</button>
+    <span id="save-groups"></span>
   </div>
-  <p class="login-error" id="save-error"></p>
-</section>
+  <label for="save-mfa" class="sr-only">Codigo MFA</label>
+  <input type="text" id="save-mfa" placeholder="Codigo MFA" inputmode="numeric" autocomplete="one-time-code" maxlength="8" />
+  <button class="primary" id="save-btn" type="button">Guardar cambios <kbd>Ctrl S</kbd></button>
+  <button class="ghost" id="discard-btn" type="button">Descartar</button>
+  <p class="login-error" id="save-error" role="alert"></p>
+</div>
 
 <script>
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
-let config = null;
-const pending = {};          // key -> nuevo valor
-let ollamaModels = [];
 
+// Orden de las secciones: lo que se revisa mas seguido primero.
+const GROUP_ORDER = ['Notificaciones', 'Inteligencia artificial', 'Deteccion de intrusos', 'Escaneos y alertas',
+  'Mapa de ataques (GeoIP)', 'Respaldos', 'Retencion de datos', 'Sesiones y acceso'];
+const GROUP_DESC = {
+  'Notificaciones': 'Avisos por Telegram, ntfy o correo cuando hay un evento de seguridad o vulnerabilidades para actualizar. Se puede usar uno, varios o ninguno.',
+  'Inteligencia artificial': 'La IA resume los eventos, lee los informes de los hosts y recomienda que hacer con cada vulnerabilidad.',
+  'Deteccion de intrusos': 'Cuando una misma IP pasa estos umbrales se abre un evento de seguridad.',
+  'Escaneos y alertas': 'Cada cuanto trabajan las tareas automaticas del servidor.',
+  'Mapa de ataques (GeoIP)': 'Con la base gratuita GeoLite2 de MaxMind el mapa ubica el origen de cada ataque.',
+  'Respaldos': 'Copias de la base de datos en la carpeta backups/ del proyecto.',
+  'Retencion de datos': 'Cuanto se guarda cada tipo de dato antes de borrarlo.',
+  'Sesiones y acceso': 'Inicio de sesion en este panel.',
+};
+const CHANNELS = { 'Telegram': 'Telegram', 'ntfy': 'ntfy', 'Correo (SMTP)': 'correo' };
+const UNIT_SUFFIX = { s: 's', h: 'h', d: 'dias' };
+const UNIT_WORDS = { s: 'segundos', h: 'horas', d: 'dias' };
+const TABLE_LABELS = {
+  metrics: 'Metricas de los hosts', ingested_requests: 'Peticiones HTTP', auth_attempts: 'Intentos de login',
+  security_events: 'Eventos de seguridad', alerts: 'Alertas', commands: 'Comandos',
+  vulnerability_findings: 'Vulnerabilidades', installed_packages: 'Paquetes instalados',
+};
+
+let config = null;
+let byKey = {};
+const pending = {};        // key -> nuevo valor
+const fieldErrors = {};    // key -> mensaje (validacion en el navegador)
+let ollamaModels = [];
+let backupState = null;    // respuesta de /config/backups, para el resumen
+let navObserver = null;
+
+const slug = g => 's-' + g.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// --- unidades: "86400" -> "1 dia"
+function plural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+function humanUnit(raw, unit) {
+  const n = Number(raw);
+  if (raw === '' || !Number.isFinite(n) || n <= 0) return '';
+  if (unit === 'd') return n >= 14 && n % 7 === 0 ? plural(n / 7, 'semana', 'semanas') : '';
+  const s = unit === 's' ? n : unit === 'h' ? n * 3600 : null;
+  if (s == null || s < 60 || (unit === 'h' && s < 86400)) return '';
+  if (s % 86400 === 0) return plural(s / 86400, 'dia', 'dias');
+  if (s % 3600 === 0) return `${s / 3600} h`;
+  if (s >= 3600) return `${(s / 3600).toFixed(1).replace('.', ',')} h`;
+  if (s % 60 === 0) return `${s / 60} min`;
+  return `${Math.floor(s / 60)} min ${s % 60} s`;
+}
+
+// Las referencias de la ayuda (cuentas de Telegram, alta de MaxMind) como enlaces.
+function linkify(text) {
+  return esc(text)
+    .replace(/@(BotFather|userinfobot)\b/g, '<a href="https://t.me/$1" target="_blank" rel="noopener noreferrer">@$1</a>')
+    .replace(/maxmind\.com\/en\/geolite2\/signup/g, '<a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener noreferrer">maxmind.com/en/geolite2/signup</a>');
+}
+
+function displayLabel(f) {
+  // Dentro de un canal ("Telegram: token del bot") el prefijo ya lo dice el subtitulo.
+  if (f.section in CHANNELS && f.label.includes(': ')) {
+    const rest = f.label.split(': ').slice(1).join(': ');
+    return rest.charAt(0).toUpperCase() + rest.slice(1);
+  }
+  return f.label;
+}
+
+function currentValue(f) { return f.key in pending ? pending[f.key] : f.value; }
+function secretSet(key) { const f = byKey[key]; return f.configured; }
+
+// --- controles
 function fieldInput(f) {
   const id = `f-${f.key}`;
-  const changed = f.key in pending;
-  const val = changed ? pending[f.key] : f.value;
+  const described = `aria-describedby="h-${f.key} e-${f.key}${f.unit && UNIT_SUFFIX[f.unit] ? ` u-${f.key}` : ''}"`;
+  const val = currentValue(f);
   if (f.kind === 'bool') {
-    return `<label style="display:flex; gap: var(--space-2); align-items:center;">
-      <input type="checkbox" id="${id}" data-key="${f.key}" ${val ? 'checked' : ''}/> Activado</label>`;
+    return `<label class="switch">
+      <input type="checkbox" role="switch" id="${id}" data-key="${f.key}" ${val ? 'checked' : ''} ${described}/>
+      <span class="switch-track" aria-hidden="true"></span>
+      <span class="switch-text" data-switch-text>${val ? 'Activado' : 'Desactivado'}</span></label>`;
   }
   if (f.kind === 'choice') {
-    return `<select id="${id}" data-key="${f.key}">${f.choices.map(c => `<option value="${esc(c)}" ${c === val ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>`;
+    return `<select id="${id}" data-key="${f.key}" ${described}>${f.choices.map((c, i) =>
+      `<option value="${esc(c)}" ${c === val ? 'selected' : ''}>${esc(f.choice_labels[i] || c)}</option>`).join('')}</select>`;
   }
   if (f.kind === 'secret') {
     const status = f.configured ? `<span class="badge ok">${esc(f.hint || 'configurada')}</span>` : `<span class="badge neutral">sin configurar</span>`;
-    const gen = f.generable ? `<button class="sm ghost" type="button" data-generate="${f.key}">Generar nuevo</button>` : '';
+    const gen = f.generable ? `<button class="sm" type="button" data-generate="${f.key}">Generar nuevo</button>` : '';
     const clear = f.configured && !f.generable ? `<button class="sm ghost" type="button" data-clear="${f.key}">Quitar</button>` : '';
-    return `<div style="display:flex; gap: var(--space-2); align-items:center; flex-wrap: wrap;">
-      ${status}
-      <input type="password" id="${id}" data-key="${f.key}" placeholder="${f.configured ? 'Nuevo valor (dejar vacio para no cambiar)' : 'Pegar valor'}"
-        value="${changed ? esc(pending[f.key]) : ''}" autocomplete="off" style="min-width: 280px;" />
-      ${gen}${clear}</div>`;
+    return `<div class="setting-control-line">${status}${gen}${clear}</div>
+      <input type="password" id="${id}" data-key="${f.key}" ${described}
+        placeholder="${f.configured ? 'Nuevo valor (vacio = no cambiar)' : 'Pegar valor'}"
+        value="${f.key in pending ? esc(pending[f.key]) : ''}" autocomplete="off" spellcheck="false" />`;
   }
-  const attrs = f.kind === 'int' ? `type="number" ${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''}` : 'type="text"';
+  if (f.kind === 'int') {
+    const range = `${f.min != null ? `min="${f.min}"` : ''} ${f.max != null ? `max="${f.max}"` : ''}`;
+    const input = `<input type="number" inputmode="numeric" ${range} id="${id}" data-key="${f.key}" value="${esc(val ?? '')}" ${described} />`;
+    if (!f.unit) return input;
+    const suffix = UNIT_SUFFIX[f.unit] || f.unit;
+    const human = UNIT_SUFFIX[f.unit] ? `<span class="unit-human" id="u-${f.key}" data-human="${f.key}">${esc(humanUnit(val, f.unit) ? '= ' + humanUnit(val, f.unit) : '')}</span>` : '';
+    return `<div class="setting-control-line"><span class="input-unit">${input}<span class="unit" aria-hidden="true">${esc(suffix)}</span></span>${human}</div>`;
+  }
   const list = f.key === 'OLLAMA_MODEL' ? 'list="ollama-models"' : '';
-  return `<input ${attrs} ${list} id="${id}" data-key="${f.key}" value="${esc(val ?? '')}" style="min-width: 220px;" />`;
+  return `<input type="text" ${list} id="${id}" data-key="${f.key}" value="${esc(val ?? '')}" ${described} spellcheck="false" />`;
+}
+
+function fieldRow(f) {
+  const meta = [`<code>${esc(f.key)}</code>`];
+  // "valor por defecto" es lo normal; solo se avisa si viene del entorno del
+  // contenedor (no esta en el .env, editarlo a mano no lo mostraria).
+  if (f.source === 'entorno del contenedor') meta.push('viene del entorno del contenedor');
+  if (f.applies && f.applies !== 'Inmediato') meta.push(`se aplica ${esc(f.applies.charAt(0).toLowerCase() + f.applies.slice(1))}`);
+  const search = norm(`${f.label} ${f.help} ${f.key} ${f.group} ${f.section}`);
+  return `
+    <div class="setting-row" data-row="${f.key}" data-search="${esc(search)}">
+      <div class="setting-info">
+        <label class="setting-label" for="f-${f.key}">${esc(displayLabel(f))}
+          <span class="dirty-tag" data-dirty="${f.key}" ${f.key in pending ? '' : 'hidden'}>sin guardar
+            <button type="button" data-undo="${f.key}" aria-label="Deshacer el cambio en ${esc(f.label)}">deshacer</button></span>
+        </label>
+        <p class="setting-help" id="h-${f.key}">${linkify(f.help)}<span class="setting-meta">${meta.join(' · ')}</span></p>
+      </div>
+      <div class="setting-control">
+        ${fieldInput(f)}
+        <p class="setting-error" id="e-${f.key}">${esc(fieldErrors[f.key] || '')}</p>
+      </div>
+    </div>`;
+}
+
+// --- estado de canales y resumen
+function channelState(name) {
+  if (name === 'Telegram') {
+    const a = secretSet('TELEGRAM_BOT_TOKEN'), b = !!byKey.TELEGRAM_CHAT_ID.value;
+    return a && b ? 'ok' : a || b ? 'warn' : 'off';
+  }
+  if (name === 'ntfy') return byKey.NTFY_URL.value ? 'ok' : secretSet('NTFY_TOKEN') ? 'warn' : 'off';
+  const parts = ['SMTP_HOST', 'SMTP_TO', 'SMTP_FROM'].map(k => !!byKey[k].value);
+  return parts.every(Boolean) ? 'ok' : parts.some(Boolean) || secretSet('SMTP_PASSWORD') ? 'warn' : 'off';
+}
+function channelBadge(name) {
+  const st = channelState(name);
+  if (st === 'ok') return '<span class="badge ok">activo</span>';
+  if (st === 'warn') {
+    const need = name === 'Telegram' ? 'falta el token o el chat ID' : name === 'ntfy' ? 'falta la URL' : 'faltan servidor, remitente o destinatario';
+    return `<span class="badge warn">incompleto: ${need}</span>`;
+  }
+  return '<span class="badge neutral">sin configurar</span>';
+}
+
+function statusItem(label, cls, text, group) {
+  return `<a href="#${slug(group)}"><div class="settings-status-label">${esc(label)}</div>
+    <div class="settings-status-value"><span class="status ${cls}"><span class="dot ${cls}"></span>${esc(text)}</span></div></a>`;
+}
+function renderStatus() {
+  const el = document.getElementById('settings-status');
+  if (!el) return;
+  const active = Object.keys(CHANNELS).filter(c => channelState(c) === 'ok').map(c => CHANNELS[c]);
+  const backend = byKey.AI_BACKEND.value;
+  const model = backend === 'claude' ? byKey.CLAUDE_MODEL.value : byKey.OLLAMA_MODEL.value;
+  let backup = ['idle', 'Leyendo...'];
+  if (backupState) {
+    if (!backupState.available) backup = ['warn', 'Sin contenedor de respaldo'];
+    else if (backupState.last_age_hours == null) backup = ['crit', 'Todavia no hay respaldos'];
+    else backup = [backupState.stale ? 'crit' : 'ok', `${backupState.stale ? 'Atrasado: ultimo' : 'Ultimo'} hace ${backupState.last_age_hours} h`];
+  }
+  el.innerHTML = [
+    statusItem('Notificaciones', active.length ? 'ok' : 'warn',
+      active.length ? `Por ${active.join(', ')}` : 'Ningun canal: no llegan avisos', 'Notificaciones'),
+    statusItem('Motor de IA', 'ok', `${backend === 'claude' ? 'Claude' : 'Ollama'} · ${model}`, 'Inteligencia artificial'),
+    statusItem('Respaldos', backup[0], backup[1], 'Respaldos'),
+    statusItem('Mapa de ataques', config.geoip.configured ? 'ok' : 'idle',
+      config.geoip.configured ? 'Base GeoIP instalada' : 'Sin base GeoIP', 'Mapa de ataques (GeoIP)'),
+    statusItem('Auditoria con Claude', secretSet('AUDIT_API_TOKEN') ? 'ok' : 'idle',
+      secretSet('AUDIT_API_TOKEN') ? 'Activa' : 'Apagada', 'Inteligencia artificial'),
+    statusItem('Cookies de sesion', byKey.SESSION_COOKIE_SECURE.value ? 'ok' : 'idle',
+      byKey.SESSION_COOKIE_SECURE.value ? 'Solo por HTTPS' : 'Tambien por HTTP', 'Sesiones y acceso'),
+  ].join('');
+}
+
+// --- extras por seccion
+function sectionExtras(g) {
+  const geo = config.geoip;
+  if (g === 'Notificaciones') return `
+    <div class="settings-actions">
+      <button class="sm" type="button" id="notify-test-btn">Enviar notificacion de prueba</button>
+      <p id="notify-test-result" aria-live="polite">Usa los datos ya guardados de cada canal.</p>
+    </div>`;
+  if (g.startsWith('Mapa')) return `
+    <div class="settings-actions">
+      <button class="sm" type="button" id="geoip-btn">Descargar base GeoIP</button>
+      <p>${geo.configured ? `Base instalada, actualizada el ${esc(new Date(geo.updated * 1000).toLocaleString())}.` : 'Base no instalada: el mapa de ataques no tiene coordenadas.'} Guarda antes el Account ID y la License Key.</p>
+    </div>`;
+  if (g === 'Respaldos') return `<div class="settings-actions" id="backups-panel"><p>Leyendo respaldos...</p></div>`;
+  if (g === 'Retencion de datos') return `<div class="settings-actions" id="retention-panel"><p>Leyendo tamanos...</p></div>`;
+  if (g === 'Sesiones y acceso') return `
+    <div class="settings-actions" id="sessions-actions">
+      <button class="sm danger" type="button" data-generate="SESSION_SECRET_KEY">Cerrar todas las sesiones</button>
+      <p>Genera una clave de sesion nueva: se cierran todas las sesiones abiertas, incluida la tuya. Sirve si sospechas que alguien tiene una sesion robada.</p>
+    </div>`;
+  return '';
+}
+
+function renderSection(g) {
+  const fields = config.fields.filter(f => f.group === g);
+  const sections = [...new Set(fields.map(f => f.section || ''))];
+  const body = sections.length === 1 && !sections[0]
+    ? `<div class="settings-rows">${fields.map(fieldRow).join('')}</div>`
+    : sections.map(sec => `
+      <div class="settings-sub">
+        ${sec ? `<div class="settings-sub-head"><h3>${esc(sec)}</h3>${sec in CHANNELS ? channelBadge(sec) : ''}</div>` : ''}
+        ${fields.filter(f => (f.section || '') === sec).map(fieldRow).join('')}
+      </div>`).join('');
+  return `
+    <section class="panel settings-section" id="${slug(g)}" aria-labelledby="${slug(g)}-h">
+      <h2 id="${slug(g)}-h">${esc(g)}</h2>
+      ${GROUP_DESC[g] ? `<p class="settings-section-desc">${esc(GROUP_DESC[g])}</p>` : ''}
+      ${body}
+      ${sectionExtras(g)}
+    </section>`;
 }
 
 function render() {
@@ -59,79 +247,164 @@ function render() {
     wrap.innerHTML = `<section class="panel" style="border:1px solid var(--warn);"><p>El servidor no puede escribir <code>${esc(config.env_file)}</code>. Falta montar el <code>.env</code> en <code>docker-compose.yml</code> (<code>./.env:/config/.env</code>) y recrear el servidor.</p></section>`;
     return;
   }
-  const groups = [...new Set(config.fields.map(f => f.group))];
-  const geo = config.geoip;
-  wrap.innerHTML = groups.map(g => `
-    <section class="panel">
-      <h2>${esc(g)}</h2>
-      <table class="data">
-        <colgroup><col style="width:28%"><col style="width:42%"><col style="width:30%"></colgroup>
-        <tbody>${config.fields.filter(f => f.group === g).map(f => `
-          <tr>
-            <td><strong>${esc(f.label)}</strong><div style="color: var(--text-muted); font-size: var(--text-xs);"><code>${esc(f.key)}</code> · ${esc(f.source)}</div></td>
-            <td>${fieldInput(f)}${f.key in pending ? ' <span class="badge warn">sin guardar</span>' : ''}</td>
-            <td style="color: var(--text-muted); font-size: var(--text-xs);">${esc(f.help)}<div>Se aplica: ${esc(f.applies)}</div></td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-      ${g === 'Retencion de datos' ? `<div id="retention-panel" style="margin-top: var(--space-3);"><p style="color: var(--text-muted);">Cargando tamanos...</p></div>` : ''}
-      ${g === 'Respaldos' ? `<div id="backups-panel" style="margin-top: var(--space-3);"><p style="color: var(--text-muted);">Cargando respaldos...</p></div>` : ''}
-      ${g === 'Notificaciones' ? `
-        <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
-          <button class="sm" type="button" id="notify-test-btn">Enviar notificacion de prueba</button>
-          <span style="color: var(--text-muted); font-size: var(--text-xs);" id="notify-test-result">Guarda primero los datos del canal.</span>
-        </div>` : ''}
-      ${g.startsWith('Mapa') ? `
-        <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
-          <button class="sm" type="button" id="geoip-btn">Descargar base GeoIP</button>
-          <span style="color: var(--text-muted); font-size: var(--text-xs);">${geo.configured ? `Base instalada, actualizada el ${new Date(geo.updated * 1000).toLocaleString()}` : 'Base no instalada: el mapa de ataques no tiene coordenadas.'} Guarda primero el Account ID y la License Key.</span>
-        </div>` : ''}
-    </section>`).join('') + `
-    <section class="panel">
-      <h2>Sesiones activas</h2>
-      <p style="color: var(--text-muted); font-size: var(--text-sm);">Genera una clave de sesion nueva: se cierran todas las sesiones abiertas, incluida la tuya. Util si sospechas que alguien tiene una sesion robada.</p>
-      <button class="sm ghost" type="button" data-generate="SESSION_SECRET_KEY">Cerrar todas las sesiones</button>
-    </section>
-    <section class="panel">
-      <h2>Solo en el .env</h2>
-      <p style="color: var(--text-muted); font-size: var(--text-sm);">${config.read_only.map(k => `<code>${esc(k)}</code>`).join(', ')}: son de infraestructura (base de datos, conexion a Ollama). Mal puestos dejan la plataforma sin base de datos o sin IA, y no se podrian arreglar desde esta pagina. Se cambian editando el <code>.env</code> y recreando los contenedores.</p>
-    </section>
+  const present = [...new Set(config.fields.map(f => f.group))];
+  const groups = [...GROUP_ORDER.filter(g => present.includes(g)), ...present.filter(g => !GROUP_ORDER.includes(g))];
+  const search = document.getElementById('settings-search')?.value || '';
+  wrap.innerHTML = `
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Secciones de la configuracion">
+        <label for="settings-search" class="sr-only">Buscar un ajuste</label>
+        <input type="search" id="settings-search" placeholder="Buscar ajuste" value="${esc(search)}" autocomplete="off" />
+        ${groups.map(g => `<a class="settings-nav-link" href="#${slug(g)}" data-nav="${slug(g)}">${esc(g)}<span class="settings-nav-dirty" data-nav-dirty="${esc(g)}" hidden></span></a>`).join('')}
+      </nav>
+      <div class="settings-main">
+        <section class="panel" id="settings-status-panel" aria-label="Estado">
+          <div class="settings-status" id="settings-status"></div>
+        </section>
+        ${groups.map(renderSection).join('')}
+        <p class="settings-empty" id="settings-empty" hidden>Ningun ajuste coincide con la busqueda.</p>
+        <p class="settings-footnote">Solo se cambian editando el <code>.env</code> y recreando los contenedores: ${config.read_only.map(k => `<code>${esc(k)}</code>`).join(', ')}. Son de infraestructura (base de datos, conexion a Ollama): mal puestos dejan la plataforma sin base de datos o sin IA y no se podrian arreglar desde esta pagina.</p>
+      </div>
+    </div>
     <datalist id="ollama-models">${ollamaModels.map(m => `<option value="${esc(m)}">`).join('')}</datalist>`;
 
   wrap.querySelectorAll('[data-key]').forEach(el => {
     const ev = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input';
-    el.addEventListener(ev, () => {
-      const f = config.fields.find(x => x.key === el.dataset.key);
-      const v = el.type === 'checkbox' ? el.checked : el.value;
-      if (f.kind === 'secret' && v === '') delete pending[f.key];
-      else if (f.kind !== 'secret' && String(v) === String(f.value)) delete pending[f.key];
-      else pending[f.key] = v;
-      updateSaveBar();
-    });
+    el.addEventListener(ev, () => onFieldChange(el));
   });
+  wrap.querySelectorAll('[data-undo]').forEach(btn => btn.addEventListener('click', (e) => { e.preventDefault(); undoField(btn.dataset.undo); }));
   wrap.querySelectorAll('[data-clear]').forEach(btn => btn.addEventListener('click', () => {
     pending[btn.dataset.clear] = '';
-    toast('Se va a quitar al guardar.', 'default');
+    document.getElementById(`f-${btn.dataset.clear}`).value = '';
+    markRow(btn.dataset.clear);
     updateSaveBar();
+    toast('Se va a quitar al guardar.', 'default');
   }));
-  wrap.querySelectorAll('[data-generate]').forEach(btn => btn.addEventListener('click', () => generate(btn.dataset.generate)));
+  wrap.querySelectorAll('[data-generate]').forEach(btn => btn.addEventListener('click', () => generate(btn.dataset.generate, btn)));
   document.getElementById('geoip-btn')?.addEventListener('click', downloadGeoip);
   document.getElementById('notify-test-btn')?.addEventListener('click', notifyTest);
+  document.getElementById('settings-search').addEventListener('input', (e) => applySearch(e.target.value));
+  renderStatus();
+  applySearch(search);
+  updateSaveBar();
+  observeNav();
   loadBackups();
   loadRetention();
 }
 
+// --- edicion
+function validate(f, v) {
+  if (f.kind === 'int') {
+    if (!/^-?\d+$/.test(String(v).trim())) return 'Tiene que ser un numero entero.';
+    const n = Number(v);
+    if ((f.min != null && n < f.min) || (f.max != null && n > f.max)) {
+      const unit = UNIT_WORDS[f.unit] || f.unit || '';
+      return `Tiene que estar entre ${f.min} y ${f.max}${unit ? ' ' + unit : ''}.`;
+    }
+  }
+  if (f.key === 'NTFY_URL' && v && !/^https?:\/\//.test(v)) return 'Tiene que empezar con https://';
+  if ((f.key === 'SMTP_FROM' || f.key === 'SMTP_TO') && v && !v.includes('@')) return 'No parece una direccion de correo.';
+  if (f.key === 'MAXMIND_ACCOUNT_ID' && v && !/^\d+$/.test(v)) return 'Es un numero.';
+  return '';
+}
+
+function setFieldError(key, msg) {
+  if (msg) fieldErrors[key] = msg; else delete fieldErrors[key];
+  const el = document.getElementById(`e-${key}`);
+  if (el) el.textContent = msg || '';
+  document.getElementById(`f-${key}`)?.setAttribute('aria-invalid', msg ? 'true' : 'false');
+}
+
+function onFieldChange(el) {
+  const f = byKey[el.dataset.key];
+  const v = el.type === 'checkbox' ? el.checked : el.value;
+  if (el.type === 'checkbox') el.closest('.switch').querySelector('[data-switch-text]').textContent = v ? 'Activado' : 'Desactivado';
+  if (f.kind === 'secret' && v === '') delete pending[f.key];
+  else if (f.kind !== 'secret' && String(v) === String(f.value)) delete pending[f.key];
+  else pending[f.key] = v;
+  setFieldError(f.key, f.key in pending && f.kind !== 'secret' ? validate(f, v) : '');
+  const human = document.querySelector(`[data-human="${f.key}"]`);
+  if (human) { const h = humanUnit(v, f.unit); human.textContent = h ? `= ${h}` : ''; }
+  markRow(f.key);
+  updateSaveBar();
+}
+
+function undoField(key) {
+  const f = byKey[key];
+  delete pending[key];
+  const el = document.getElementById(`f-${key}`);
+  if (f.kind === 'bool') {
+    el.checked = !!f.value;
+    el.closest('.switch').querySelector('[data-switch-text]').textContent = f.value ? 'Activado' : 'Desactivado';
+  } else {
+    el.value = f.kind === 'secret' ? '' : (f.value ?? '');
+  }
+  const human = document.querySelector(`[data-human="${key}"]`);
+  if (human) { const h = humanUnit(f.value, f.unit); human.textContent = h ? `= ${h}` : ''; }
+  setFieldError(key, '');
+  markRow(key);
+  updateSaveBar();
+  el.focus();
+}
+
+function markRow(key) {
+  const tag = document.querySelector(`[data-dirty="${key}"]`);
+  if (tag) tag.hidden = !(key in pending);
+}
+
 function updateSaveBar() {
-  const n = Object.keys(pending).length;
-  document.getElementById('save-panel').style.display = n ? 'block' : 'none';
+  const keys = Object.keys(pending);
+  const n = keys.length;
+  document.getElementById('save-bar').hidden = !n;
   document.getElementById('save-summary').textContent = `${n} cambio${n === 1 ? '' : 's'} sin guardar`;
+  const groups = [...new Set(keys.map(k => byKey[k].group))];
+  document.getElementById('save-groups').textContent = groups.join(' · ');
   document.getElementById('save-error').textContent = '';
+  document.querySelectorAll('[data-nav-dirty]').forEach(dot => { dot.hidden = !groups.includes(dot.dataset.navDirty); });
+}
+
+// --- busqueda y navegacion
+function applySearch(raw) {
+  const q = norm(raw.trim());
+  let any = false;
+  document.querySelectorAll('.settings-section').forEach(sec => {
+    let secHas = false;
+    sec.querySelectorAll('.setting-row').forEach(row => {
+      const hit = !q || row.dataset.search.includes(q);
+      row.classList.toggle('is-hidden', !hit);
+      secHas = secHas || hit;
+    });
+    sec.querySelectorAll('.settings-sub').forEach(sub => sub.classList.toggle('is-hidden', !sub.querySelector('.setting-row:not(.is-hidden)')));
+    sec.classList.toggle('is-hidden', !secHas);
+    document.querySelector(`[data-nav="${sec.id}"]`)?.classList.toggle('is-hidden', !secHas);
+    any = any || secHas;
+  });
+  document.getElementById('settings-status-panel').hidden = !!q;
+  document.getElementById('settings-empty').hidden = any;
+}
+
+function observeNav() {
+  if (navObserver) navObserver.disconnect();
+  const links = document.querySelectorAll('.settings-nav-link');
+  navObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (!entry.isIntersecting) return;
+      links.forEach(l => {
+        const on = l.dataset.nav === entry.target.id;
+        l.classList.toggle('active', on);
+        if (on) l.setAttribute('aria-current', 'location'); else l.removeAttribute('aria-current');
+        if (on && window.matchMedia('(max-width: 860px)').matches) l.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      });
+    });
+  }, { rootMargin: '-15% 0px -75% 0px' });
+  document.querySelectorAll('.settings-section').forEach(s => navObserver.observe(s));
 }
 
 async function load() {
   const res = await fetch('/api/v1/config');
   if (!res.ok) { document.getElementById('config-wrap').innerHTML = '<div class="empty-state"><p>No se pudo cargar la configuracion.</p></div>'; return; }
   config = await res.json();
+  byKey = Object.fromEntries(config.fields.map(f => [f.key, f]));
   try {
     const m = await fetch('/api/v1/config/ollama-models');
     if (m.ok) ollamaModels = (await m.json()).models;
@@ -139,43 +412,115 @@ async function load() {
   render();
 }
 
-function askMfa(message) {
-  const code = (prompt(`${message}\n\nCodigo de tu app de autenticacion:`) || '').trim();
-  return code || null;
+// --- guardar
+function fieldForError(detail) {
+  if (/API key de Anthropic/.test(detail) && !detail.includes(':')) return 'ANTHROPIC_API_KEY';
+  const f = config.fields.find(x => detail.startsWith(x.label + ':'));
+  return f ? f.key : null;
 }
 
 async function save() {
-  const code = document.getElementById('save-mfa').value.trim();
   const errEl = document.getElementById('save-error');
-  if (!code) { errEl.textContent = 'Ingresa el codigo MFA.'; return; }
+  const bad = Object.keys(fieldErrors).filter(k => k in pending);
+  if (bad.length) {
+    errEl.textContent = `Hay ${bad.length === 1 ? 'un valor' : bad.length + ' valores'} para corregir.`;
+    document.getElementById(`f-${bad[0]}`)?.focus();
+    return;
+  }
+  const mfa = document.getElementById('save-mfa');
+  const code = mfa.value.trim();
+  if (!code) { errEl.textContent = 'Ingresa el codigo de tu app de autenticacion.'; mfa.focus(); return; }
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
   const res = await fetch('/api/v1/config', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ mfa_code: code, values: pending }),
-  });
+  }).catch(() => null);
+  btn.disabled = false;
+  if (!res) { errEl.textContent = 'No se pudo conectar con el servidor.'; return; }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) { errEl.textContent = data.detail || `Error ${res.status}`; return; }
+  if (!res.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : `Error ${res.status}`;
+    const key = fieldForError(detail);
+    if (key) {
+      const msg = detail.includes(':') ? detail.split(':').slice(1).join(':').trim() : detail;
+      setFieldError(key, msg.charAt(0).toUpperCase() + msg.slice(1) + (/[.!]$/.test(msg) ? '' : '.'));
+      document.getElementById(`f-${key}`)?.focus();
+      errEl.textContent = `No se guardo: revisa "${displayLabel(byKey[key])}".`;
+    } else {
+      errEl.textContent = detail;
+      if (res.status === 400 || res.status === 403) mfa.select();
+    }
+    return;
+  }
   for (const k of Object.keys(pending)) delete pending[k];
-  document.getElementById('save-mfa').value = '';
+  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+  mfa.value = '';
   config = data.config;
-  updateSaveBar();
+  byKey = Object.fromEntries(config.fields.map(f => [f.key, f]));
   render();
   toast(`Guardado: ${data.changed.length} cambio${data.changed.length === 1 ? '' : 's'}.`, 'success');
 }
 
-async function generate(key) {
-  const warning = key === 'SESSION_SECRET_KEY'
-    ? 'Se cerraran todas las sesiones, incluida la tuya.'
-    : 'Se genera un token nuevo y el anterior deja de servir. El servidor MCP lo lee del .env, asi que sigue funcionando.';
-  const code = askMfa(warning);
-  if (!code) return;
-  const res = await fetch(`/api/v1/config/generate/${key}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mfa_code: code }),
+// Confirmacion en linea con codigo MFA (reemplaza al prompt() del navegador).
+function confirmInline(anchor, { message, action, danger, onConfirm }) {
+  document.querySelectorAll('.inline-confirm').forEach(b => b.remove());
+  const box = document.createElement('div');
+  box.className = 'inline-confirm';
+  box.setAttribute('role', 'group');
+  box.setAttribute('aria-label', action);
+  box.innerHTML = `
+    <p>${esc(message)}</p>
+    <label for="confirm-mfa">Codigo de tu app de autenticacion</label>
+    <input type="text" id="confirm-mfa" inputmode="numeric" autocomplete="one-time-code" maxlength="8" />
+    <p class="setting-error" role="alert"></p>
+    <div class="row-actions">
+      <button class="sm ${danger ? 'danger' : 'primary'}" type="button" data-ok>${esc(action)}</button>
+      <button class="sm ghost" type="button" data-cancel>Cancelar</button>
+    </div>`;
+  anchor.insertAdjacentElement('afterend', box);
+  const input = box.querySelector('input');
+  const err = box.querySelector('.setting-error');
+  const close = () => { box.remove(); anchor.focus(); };
+  const ok = async () => {
+    const code = input.value.trim();
+    if (!code) { err.textContent = 'Ingresa el codigo.'; input.focus(); return; }
+    box.querySelector('[data-ok]').disabled = true;
+    const problem = await onConfirm(code);
+    box.querySelector('[data-ok]').disabled = false;
+    if (problem) { err.textContent = problem; input.select(); } else box.remove();
+  };
+  box.querySelector('[data-ok]').addEventListener('click', ok);
+  box.querySelector('[data-cancel]').addEventListener('click', close);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); ok(); }
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) { toast(data.detail || `Error ${res.status}`, 'error'); return; }
-  if (data.logged_out) { window.location.href = '/login'; return; }
-  toast('Token nuevo guardado.', 'success');
-  load();
+  input.focus();
+}
+
+function generate(key, btn) {
+  const session = key === 'SESSION_SECRET_KEY';
+  const anchor = session ? btn.parentElement : btn.closest('.setting-control-line');
+  confirmInline(anchor, {
+    message: session
+      ? 'Se cierran todas las sesiones, incluida la tuya: vas a tener que volver a iniciar sesion.'
+      : 'El token anterior deja de servir. El servidor MCP lee el nuevo del .env, asi que sigue funcionando.',
+    action: session ? 'Cerrar todas las sesiones' : 'Generar token nuevo',
+    danger: session,
+    onConfirm: async (code) => {
+      const res = await fetch(`/api/v1/config/generate/${key}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mfa_code: code }),
+      }).catch(() => null);
+      if (!res) return 'No se pudo conectar con el servidor.';
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return typeof data.detail === 'string' ? data.detail : `Error ${res.status}`;
+      if (data.logged_out) { window.location.href = '/login'; return null; }
+      toast('Token nuevo guardado.', 'success');
+      load();
+      return null;
+    },
+  });
 }
 
 function fmtSize(b) { return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`; }
@@ -183,23 +528,24 @@ function fmtSize(b) { return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `$
 async function loadRetention() {
   const el = document.getElementById('retention-panel');
   if (!el) return;
-  const res = await fetch('/api/v1/config/retention');
-  if (!res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el tamano de la base.</p>'; return; }
+  const res = await fetch('/api/v1/config/retention').catch(() => null);
+  if (!res || !res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el tamano de la base.</p>'; return; }
   const r = await res.json();
   const last = r.last_purge && r.last_purge.at
-    ? `Ultima purga: ${new Date(r.last_purge.at).toLocaleString()} (${Object.entries(r.last_purge.deleted).filter(([, n]) => n).map(([k, n]) => `${esc(k)}: ${n}`).join(', ') || 'nada para borrar'}).`
+    ? `Ultima purga: ${new Date(r.last_purge.at).toLocaleString()} (${Object.entries(r.last_purge.deleted).filter(([, n]) => n).map(([k, n]) => `${esc(TABLE_LABELS[k] || k)}: ${n}`).join(', ') || 'nada para borrar'}).`
     : 'La purga corre una vez al dia (la primera, 10 minutos despues de arrancar el servidor).';
   el.innerHTML = `
-    <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
-      <span class="badge neutral">base de datos: ${fmtSize(r.database_bytes)}</span>
-      <button class="sm" type="button" id="retention-run-btn">Aplicar ahora</button>
-      <span style="color: var(--text-muted); font-size: var(--text-xs);">${last}</span>
-    </div>
-    <table class="data" style="margin-top: var(--space-3);"><thead><tr><th>Tabla</th><th>Filas</th><th>Tamano</th></tr></thead>
-      <tbody>${r.tables.map(t => `<tr><td><code>${esc(t.table)}</code>${t.oldest ? ` <span style="color: var(--text-muted); font-size: var(--text-xs);">desde ${new Date(t.oldest).toLocaleDateString()}</span>` : ''}</td><td>${t.rows}</td><td>${fmtSize(t.bytes)}</td></tr>`).join('')}</tbody>
+    <span class="badge neutral">Base de datos: ${fmtSize(r.database_bytes)}</span>
+    <button class="sm" type="button" id="retention-run-btn">Aplicar ahora</button>
+    <p>${last}</p>
+    <table class="data">
+      <thead><tr><th>Datos</th><th>Filas</th><th>Tamano</th></tr></thead>
+      <tbody>${r.tables.map(t => `<tr><td title="${esc(t.table)}">${esc(TABLE_LABELS[t.table] || t.table)}${t.oldest ? ` <span style="color: var(--text-muted); font-size: var(--text-xs);">desde ${new Date(t.oldest).toLocaleDateString()}</span>` : ''}</td><td>${t.rows.toLocaleString()}</td><td>${fmtSize(t.bytes)}</td></tr>`).join('')}</tbody>
     </table>`;
-  document.getElementById('retention-run-btn').addEventListener('click', async () => {
+  document.getElementById('retention-run-btn').addEventListener('click', async (e) => {
+    e.target.disabled = true;
     const res2 = await adminAction('/api/v1/config/retention/run');
+    e.target.disabled = false;
     if (!res2) return;
     const data = await res2.json();
     const n = Object.values(data.deleted).reduce((a, b) => a + b, 0);
@@ -211,31 +557,29 @@ async function loadRetention() {
 async function loadBackups() {
   const el = document.getElementById('backups-panel');
   if (!el) return;
-  const res = await fetch('/api/v1/config/backups');
-  if (!res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el estado de los respaldos.</p>'; return; }
+  const res = await fetch('/api/v1/config/backups').catch(() => null);
+  if (!res || !res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el estado de los respaldos.</p>'; return; }
   const b = await res.json();
+  backupState = b;
+  renderStatus();
   if (!b.available) {
     el.innerHTML = '<p class="login-error">El servidor no ve la carpeta ./backups: falta el contenedor de respaldo o el montaje en docker-compose.yml.</p>';
     return;
   }
   const la = b.last_attempt || {};
   const state = b.stale
-    ? `<span class="badge crit">${b.last_age_hours == null ? 'sin respaldos todavia' : `ultimo hace ${b.last_age_hours} h: atrasado`}</span>`
-    : `<span class="badge ok">ultimo hace ${b.last_age_hours} h</span>`;
-  const err = la.result === 'error' ? `<p class="login-error">Ultimo intento fallido (${esc(la.last_attempt)}): ${esc(la.message)}</p>` : '';
+    ? `<span class="badge crit">${b.last_age_hours == null ? 'Sin respaldos todavia' : `Ultimo hace ${b.last_age_hours} h: atrasado`}</span>`
+    : `<span class="badge ok">Ultimo hace ${b.last_age_hours} h</span>`;
+  const err = la.result === 'error' ? `<p class="login-error" style="flex-basis:100%">Ultimo intento fallido (${esc(la.last_attempt)}): ${esc(la.message)}</p>` : '';
   const rows = b.backups.slice(0, 10).map(x => `<tr><td><code>${esc(x.name)}</code></td><td>${fmtSize(x.size)}</td><td>${new Date(x.created).toLocaleString()}</td></tr>`).join('');
   el.innerHTML = `
-    <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
-      ${state}
-      <span style="color: var(--text-muted); font-size: var(--text-xs);">${b.backups.length} respaldos, ${fmtSize(b.total_size)} en total</span>
-      <button class="sm" type="button" id="backup-now-btn" ${b.pending_request ? 'disabled' : ''}>${b.pending_request ? 'Respaldo pedido...' : 'Respaldar ahora'}</button>
-    </div>
+    ${state}
+    <button class="sm" type="button" id="backup-now-btn" ${b.pending_request ? 'disabled' : ''}>${b.pending_request ? 'Respaldo pedido...' : 'Respaldar ahora'}</button>
+    <p>${b.backups.length} respaldos, ${fmtSize(b.total_size)} en total.</p>
     ${err}
-    ${rows ? `<table class="data" style="margin-top: var(--space-3);"><thead><tr><th>Archivo</th><th>Tamano</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-    <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">
-      Quedan en la carpeta <code>backups/</code> del proyecto. Contienen hashes de contrasenas, secretos MFA y API keys: copialos fuera de este servidor a un lugar seguro.
-      Para restaurar: <code>bash scripts/restore_backup.sh backups/&lt;archivo&gt;</code>.
-    </p>`;
+    ${rows ? `<table class="data"><thead><tr><th>Archivo</th><th>Tamano</th><th>Fecha</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
+    <p>Contienen hashes de contrasenas, secretos MFA y API keys: copialos fuera de este servidor a un lugar seguro.
+      Para restaurar: <code>bash scripts/restore_backup.sh backups/&lt;archivo&gt;</code>.</p>`;
   document.getElementById('backup-now-btn')?.addEventListener('click', async () => {
     const r = await adminAction('/api/v1/config/backups/run');
     if (r) { toast('Respaldo pedido: empieza en menos de 30 segundos.', 'success'); loadBackups(); setTimeout(loadBackups, 35000); }
@@ -244,8 +588,12 @@ async function loadBackups() {
 
 async function notifyTest() {
   const out = document.getElementById('notify-test-result');
+  const btn = document.getElementById('notify-test-btn');
+  btn.disabled = true;
   out.textContent = 'Enviando...';
-  const res = await fetch('/api/v1/config/notify-test', { method: 'POST' });
+  const res = await fetch('/api/v1/config/notify-test', { method: 'POST' }).catch(() => null);
+  btn.disabled = false;
+  if (!res) { out.textContent = 'No se pudo conectar con el servidor.'; return; }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { out.textContent = data.detail || `Error ${res.status}`; return; }
   out.textContent = Object.entries(data.results).map(([ch, r]) => `${ch}: ${r}`).join(' · ');
@@ -260,9 +608,19 @@ async function downloadGeoip() {
 }
 
 document.getElementById('save-btn').addEventListener('click', save);
+document.getElementById('save-mfa').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
 document.getElementById('discard-btn').addEventListener('click', () => {
   for (const k of Object.keys(pending)) delete pending[k];
-  updateSaveBar(); render();
+  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k];
+  render();
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    if (!Object.keys(pending).length) { toast('No hay cambios para guardar.', 'default'); return; }
+    const mfa = document.getElementById('save-mfa');
+    if (!mfa.value.trim()) mfa.focus(); else save();
+  }
 });
 window.addEventListener('beforeunload', (e) => { if (Object.keys(pending).length) { e.preventDefault(); e.returnValue = ''; } });
 load();

@@ -49,6 +49,13 @@ class EnvFileTests(unittest.TestCase):
                 app_settings.update({"AI_BACKEND": "claude"})
         self.assertEqual(self.path.read_text(encoding="utf-8"), before)
 
+    def test_range_error_names_the_unit(self):
+        # El label ya no lleva "(segundos)": la unidad tiene que estar en el error.
+        with self.assertRaisesRegex(ValueError, "entre 10 y 3600 segundos"):
+            app_settings.parse(app_settings.BY_KEY["IDS_WINDOW_SECONDS"], "5")
+        with self.assertRaisesRegex(ValueError, "entre 1 y 168 horas"):
+            app_settings.parse(app_settings.BY_KEY["BACKUP_INTERVAL_HOURS"], "500")
+
     def test_public_view_never_exposes_secrets(self):
         with override(anthropic_api_key="sk-ant-muy-secreta-1234", audit_api_token="token-largo-de-prueba-9876"):
             view = app_settings.public_view()
