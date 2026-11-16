@@ -17,33 +17,94 @@ logger = logging.getLogger("vuln_scan")
 PROMPT_EXAMPLES = 5
 
 
+FALLBACK_NOTE = "(Recomendacion generada sin IA: el modelo no dio una respuesta valida.)"
+
+
+def _fixed_versions(findings: list[VulnerabilityFinding]) -> list[str]:
+    return sorted({f.fixed_version for f in findings if f.fixed_version})
+
+
+def _build_prompt(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str:
+    critical = [f for f in findings if f.severity == "critical"]
+    examples = (critical + [f for f in findings if f.severity != "critical"])[:PROMPT_EXAMPLES]
+    example_lines = "; ".join(f"{f.vuln_id}: {(f.summary or 'sin resumen')[:150]}" for f in examples)
+    fixed = _fixed_versions(findings)
+    with_fix = sum(1 for f in findings if f.fixed_version)
+
+    if fixed:
+        status = (
+            f"{with_fix} de ellas tienen version corregida publicada (versiones: {', '.join(fixed[:3])}). "
+            "Redacta en 2-3 frases la accion a tomar: actualizar el paquete con apt a una version corregida"
+            + (", y que hacer con las que todavia no tienen parche." if with_fix < len(findings) else ".")
+        )
+    else:
+        # Sin esta aclaracion el modelo responde casi siempre "actualizar a
+        # la ultima version", que no corrige nada si no hay parche publicado.
+        # Y si se le da "desinstalar" como ejemplo, lo recomienda para todo,
+        # incluso apt o libgcrypt20 (paso en un host real).
+        status = (
+            "Ninguna tiene version corregida publicada todavia, asi que actualizar ahora no las corrige. "
+            "Redacta en 2-3 frases como reducir el riesgo segun para que sirve este paquete, y que "
+            "aplique la actualizacion de seguridad de Debian apenas se publique. No recomiendes "
+            "desinstalar paquetes base del sistema (gestor de paquetes, shell, librerias del sistema)."
+        )
+    return (
+        f"En el host '{host.name}' el paquete {package.name} {package.version} tiene "
+        f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica. "
+        f"Algunas: {example_lines}. {status} No inventes numeros de version, CVEs ni datos que no te di."
+    )
+
+
+def _grounding_source(prompt: str, findings: list[VulnerabilityFinding]) -> str:
+    # Todo lo que el texto puede citar sin inventar: el prompt mas todos los
+    # CVEs y versiones corregidas del paquete (el prompt solo lleva 5 ejemplos).
+    return " ".join([prompt, *(f.vuln_id for f in findings), *_fixed_versions(findings)])
+
+
+def _fallback_recommendation(package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str:
+    fixed = _fixed_versions(findings)
+    with_fix = sum(1 for f in findings if f.fixed_version)
+    if fixed:
+        return (
+            f"Actualizar {package.name} con apt (apt install --only-upgrade {package.name}): "
+            f"{with_fix} de {len(findings)} vulnerabilidades tienen version corregida publicada "
+            f"({', '.join(fixed[:3])}). {FALLBACK_NOTE}"
+        )
+    return (
+        f"Ninguna de las {len(findings)} vulnerabilidades de {package.name} tiene version corregida "
+        "publicada. Aplicar la actualizacion de seguridad de Debian apenas se publique (apt update && "
+        f"apt upgrade) y limitar la exposicion de los servicios que usan el paquete. {FALLBACK_NOTE}"
+    )
+
+
 async def _generate_recommendation(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str | None:
     """Una recomendacion por paquete, no por CVE: un paquete con 100 CVEs
     se arregla con un solo "actualizar", y 1 llamada a un modelo en CPU
     tarda ~20s (por CVE eran horas en un host real)."""
-    critical = [f for f in findings if f.severity == "critical"]
-    examples = (critical + [f for f in findings if f.severity != "critical"])[:PROMPT_EXAMPLES]
-    example_lines = "; ".join(f"{f.vuln_id}: {(f.summary or 'sin resumen')[:150]}" for f in examples)
-    fixed = sorted({f.fixed_version for f in findings if f.fixed_version})
-    with_fix = sum(1 for f in findings if f.fixed_version)
-
-    prompt = (
-        f"En el host '{host.name}' el paquete {package.name} {package.version} tiene "
-        f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica. "
-        f"Algunas: {example_lines}. "
-        + (
-            f"{with_fix} de ellas tienen version corregida publicada (versiones: {', '.join(fixed[:3])}). "
-            if fixed
-            else "Ninguna tiene version corregida publicada todavia. "
-        )
-        + "Redacta en 2-3 frases que accion tomar (actualizar el paquete, o como "
-        "mitigar si no hay parche). No inventes numeros de version ni datos que no te di."
-    )
     try:
-        return await ai.ask(prompt)
+        return await ai.ask(_build_prompt(host, package, findings), grounded=True)
+    except ai.AIOutputError as exc:
+        # Mejor una recomendacion fija correcta que nada. En el proximo
+        # escaneo (diario) se vuelve a probar con la IA.
+        logger.warning("IA invalida para %s, uso recomendacion fija: %s", package.name, exc)
+        return _fallback_recommendation(package, findings)
     except Exception:
         logger.exception("No se pudo generar la recomendacion de IA para %s", package.name)
         return None
+
+
+def _needs_new_recommendation(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> bool:
+    recs = {f.ai_recommendation for f in findings}
+    # None: la IA no respondio la vez pasada. Mas de un texto: quedaron de
+    # cuando era una por CVE.
+    if None in recs or len(recs) > 1:
+        return True
+    rec = next(iter(recs))
+    if rec.endswith(FALLBACK_NOTE):
+        return True
+    # Texto guardado antes de que existieran estas validaciones.
+    source = _grounding_source(_build_prompt(host, package, findings), findings)
+    return ai.looks_degenerate(rec) or bool(ai.ungrounded_identifiers(rec, source))
 
 
 async def scan_host(session: AsyncSession, host: Host) -> int:
@@ -122,15 +183,13 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
 
         await session.commit()
 
-        # Regenerar si cambio el conjunto de CVEs (nuevos o arreglados), si
-        # fallo la IA la vez pasada (None) o si quedaron textos distintos de
-        # cuando era una por CVE.
+        # Regenerar si cambio el conjunto de CVEs (nuevos o arreglados) o si
+        # lo guardado no sirve (ver _needs_new_recommendation).
         dropped = any(
             name == package.name and vid not in vuln_ids and f.status != "resolved"
             for (name, vid), f in existing.items()
         )
-        recs = {f.ai_recommendation for f in pkg_findings}
-        if pkg_findings and (added or dropped or None in recs or len(recs) > 1):
+        if pkg_findings and (added or dropped or _needs_new_recommendation(host, package, pkg_findings)):
             rec = await _generate_recommendation(host, package, pkg_findings)
             if rec:
                 for f in pkg_findings:

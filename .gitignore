@@ -9,3 +9,4 @@ venv/
 .DS_Store
 *.log
 server/data/*.mmdb
+docker-compose.override.yml

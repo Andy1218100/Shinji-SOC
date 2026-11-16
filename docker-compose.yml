@@ -19,6 +19,13 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    environment:
+      # Desactiva la cache de prompts en RAM de llama-server (--cache-ram,
+      # 8 GiB por defecto). Entradas de esa cache quedaron corruptas y cada
+      # vez que se reusaban el modelo devolvia basura (mezcla de alfabetos)
+      # para ese prompt hasta reiniciar Ollama. Costo: solo se reutiliza el
+      # prompt inmediatamente anterior, no los de antes.
+      LLAMA_ARG_CACHE_RAM: "0"
     volumes:
       - ollama_data:/root/.ollama
     ports:

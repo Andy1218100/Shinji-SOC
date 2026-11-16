@@ -71,11 +71,13 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   salta el escaneo a proposito en vez de arriesgar comparar versiones
   contra el ecosistema equivocado de OSV.dev (Debian:11 vs Debian:12,
   por ejemplo) y generar falsos positivos/negativos.
-- La recomendacion de IA a veces inventa un numero de version que no
-  le dimos, aun con la instruccion explicita de no hacerlo (es un
-  modelo de 3B, no es perfecto). El campo `fixed_version` es el dato
-  real que vino de OSV.dev; si el texto de la IA menciona otra version,
-  confiar en `fixed_version`, no en la prosa.
+- La recomendacion de IA puede inventar un numero de version o un CVE
+  que no le dimos (es un modelo de 3B). El servidor rechaza la respuesta
+  si cita CVEs o versiones que no estan en los datos de OSV y la pide de
+  nuevo; si vuelve a fallar, guarda un texto fijo (marcado "generada sin
+  IA") y lo reintenta en el escaneo siguiente. El chequeo mira
+  identificadores, no el sentido del texto: el campo `fixed_version`
+  sigue siendo el dato real que vino de OSV.dev.
 - No hay sistema de migraciones (Alembic ni similar): `create_all` solo
   crea tablas nuevas, nunca agrega columnas a una tabla existente. Si
   actualizas desde una base de datos vieja y algo tira
@@ -405,6 +407,33 @@ Por defecto todo pasa por Ollama (`AI_BACKEND=ollama`, modelo en
 respuesta puntual con Claude pasando `"backend": "claude"` en
 `POST /api/v1/ai/ask`, o cambiar `AI_BACKEND=claude` para que tambien se
 use en la explicacion automatica de alertas.
+
+Toda respuesta de Ollama pasa por una validacion antes de guardarse o
+mostrarse:
+- **Tope de tokens:** se rechaza la respuesta si llega a `num_predict`
+  (512) sin terminar.
+- **Alfabetos:** se rechaza si trae texto en otros alfabetos.
+
+Si una respuesta se rechaza, se reintenta una vez con el prompt
+recalculado desde cero. Esto existe porque, probado en una PC con
+Windows y Docker Desktop, el modelo a veces devolvio basura (mezcla de
+alfabetos y fragmentos de codigo) que no dependia del prompt. La causa
+de fondo no esta identificada. Una parte se debia a la cache de prompts
+en RAM de llama-server, que reutilizaba estados corruptos; por eso
+`docker-compose.yml` la desactiva con `LLAMA_ARG_CACHE_RAM=0`.
+
+Ollama en CPU usa todos los nucleos mientras genera, y el escaneo de
+vulnerabilidades puede pedirle decenas de respuestas seguidas. En una PC
+de escritorio eso son minutos de CPU al 100%. Para limitar los nucleos
+solo en esa maquina, crea un `docker-compose.override.yml` (ya esta en
+`.gitignore`; Compose lo carga solo) y despues corre
+`docker compose up -d ollama`:
+
+```yaml
+services:
+  ollama:
+    cpus: "4"
+```
 
 ## Desarrollo local sin Docker (opcional)
 

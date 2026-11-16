@@ -95,5 +95,8 @@ async def _build_context(db: AsyncSession, host_id: str | None, scope: str | Non
 async def ask(payload: AskRequest, db: AsyncSession = Depends(get_db)):
     context = await _build_context(db, payload.host_id, payload.scope)
     prompt = f"Contexto:\n{context}\n\nPregunta: {payload.question}"
-    answer = await ai.ask(prompt, backend=payload.backend)
+    try:
+        answer = await ai.ask(prompt, backend=payload.backend)
+    except ai.AIOutputError:
+        answer = "La IA devolvio una respuesta invalida (texto sin sentido o cortado). Proba preguntar de nuevo."
     return {"answer": answer}
