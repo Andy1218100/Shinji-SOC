@@ -17,6 +17,12 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+async def ensure_columns(conn: AsyncConnection) -> None:
+    """No hay migraciones y `create_all` no agrega columnas a una tabla que
+    ya existe: las columnas nuevas se agregan aca, idempotente."""
+    await conn.execute(text("ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS urgency VARCHAR(32)"))
+
+
 async def ensure_hypertables(conn: AsyncConnection) -> None:
     """La imagen es TimescaleDB pero `create_all` crea tablas Postgres
     normales -- esto las convierte a hypertable (particionado por tiempo)

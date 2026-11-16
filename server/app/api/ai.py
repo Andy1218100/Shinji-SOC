@@ -64,14 +64,23 @@ async def _security_context(db: AsyncSession) -> list[str]:
 
 async def _vulnerabilities_context(db: AsyncSession) -> list[str]:
     parts: list[str] = []
+    # Sin los que Debian marca "unimportant" (en un host real eran ~1/3): con
+    # solo 30 filas de contexto, llenaban el lugar de los que importan.
     findings = (
         await db.execute(
-            select(VulnerabilityFinding).where(VulnerabilityFinding.status == "open").order_by(VulnerabilityFinding.last_seen.desc()).limit(30)
+            select(VulnerabilityFinding)
+            .where(
+                VulnerabilityFinding.status == "open",
+                VulnerabilityFinding.urgency.is_distinct_from("unimportant"),
+            )
+            .order_by((VulnerabilityFinding.severity == "critical").desc(), VulnerabilityFinding.last_seen.desc())
+            .limit(30)
         )
     ).scalars().all()
     for f in findings:
         parts.append(
             f"{f.package_name} {f.package_version}: {f.vuln_id} severidad={f.severity} "
+            f"urgencia_debian={f.urgency or 'sin dato'} "
             f"fix_disponible={f.fixed_version or 'no'} (host_id={f.host_id})"
         )
     return parts

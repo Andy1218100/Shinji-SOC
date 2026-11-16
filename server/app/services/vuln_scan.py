@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -18,13 +19,52 @@ PROMPT_EXAMPLES = 5
 
 
 FALLBACK_NOTE = "(Recomendacion generada sin IA: el modelo no dio una respuesta valida.)"
+# Textos fijos para casos donde la IA no aporta y puede confundir. Terminan
+# en una marca para reconocerlos al decidir si regenerar.
+FIXED_NOTE = "(Recomendacion fija, sin IA.)"
+_THIRD_PARTY_BUILD = re.compile(r"pve|proxmox", re.IGNORECASE)
+
+
+def is_third_party_build(version: str) -> bool:
+    """Paquetes compilados por Proxmox (frr 10.6.1-1+pve3, corosync
+    3.2.0-pve1) con el mismo nombre que el de Debian. OSV evalua el paquete
+    de Debian (frr 10.3 en trixie): un CVE "8.3 through 10.5.1" sale contra
+    la 10.6.1 de Proxmox aunque probablemente no la afecte."""
+    return bool(_THIRD_PARTY_BUILD.search(version))
+
+
+def _relevant(findings: list[VulnerabilityFinding]) -> list[VulnerabilityFinding]:
+    return [f for f in findings if f.urgency != osv.UNIMPORTANT]
+
+
+def _fixed_recommendation(package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str | None:
+    if is_third_party_build(package.version):
+        return (
+            f"{package.name} {package.version} es un paquete compilado por Proxmox, no el de Debian. "
+            "OSV compara contra el paquete de Debian, asi que "
+            + ("este CVE puede" if len(findings) == 1 else f"estos {len(findings)} CVEs pueden")
+            + " no aplicar "
+            "a esta version: revisar los avisos de seguridad de Proxmox y mantenerlo actualizado con "
+            f"apt desde su repositorio. {FIXED_NOTE}"
+        )
+    if not _relevant(findings):
+        return (
+            f"Debian clasifica {'este CVE' if len(findings) == 1 else f'los {len(findings)} CVEs'} de "
+            f"{package.name} como \"unimportant\": no afecta al paquete de Debian, no tiene impacto practico, "
+            "o el paquete no tiene soporte de seguridad. Debian no publica correccion ni lo sigue, por eso "
+            f"figura para todas las versiones. No requiere accion. {FIXED_NOTE}"
+        )
+    return None
 
 
 def _fixed_versions(findings: list[VulnerabilityFinding]) -> list[str]:
     return sorted({f.fixed_version for f in findings if f.fixed_version})
 
 
-def _build_prompt(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str:
+def _build_prompt(host: Host, package: InstalledPackage, all_findings: list[VulnerabilityFinding]) -> str:
+    # Los "unimportant" no van al prompt: son ruido para la recomendacion.
+    findings = _relevant(all_findings) or all_findings
+    ignored = len(all_findings) - len(findings)
     critical = [f for f in findings if f.severity == "critical"]
     examples = (critical + [f for f in findings if f.severity != "critical"])[:PROMPT_EXAMPLES]
     example_lines = "; ".join(f"{f.vuln_id}: {(f.summary or 'sin resumen')[:150]}" for f in examples)
@@ -50,8 +90,9 @@ def _build_prompt(host: Host, package: InstalledPackage, findings: list[Vulnerab
         )
     return (
         f"En el host '{host.name}' el paquete {package.name} {package.version} tiene "
-        f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica. "
-        f"Algunas: {example_lines}. {status} No inventes numeros de version, CVEs ni datos que no te di."
+        f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica"
+        + (f" (y otras {ignored} que Debian clasifica como sin importancia, que no hace falta tratar)" if ignored else "")
+        + f". Algunas: {example_lines}. {status} No inventes numeros de version, CVEs ni datos que no te di."
     )
 
 
@@ -81,6 +122,8 @@ async def _generate_recommendation(host: Host, package: InstalledPackage, findin
     """Una recomendacion por paquete, no por CVE: un paquete con 100 CVEs
     se arregla con un solo "actualizar", y 1 llamada a un modelo en CPU
     tarda ~20s (por CVE eran horas en un host real)."""
+    if fixed := _fixed_recommendation(package, findings):
+        return fixed
     try:
         return await ai.ask(_build_prompt(host, package, findings), grounded=True)
     except ai.AIOutputError as exc:
@@ -100,7 +143,10 @@ def _needs_new_recommendation(host: Host, package: InstalledPackage, findings: l
     if None in recs or len(recs) > 1:
         return True
     rec = next(iter(recs))
-    if rec.endswith(FALLBACK_NOTE):
+    fixed = _fixed_recommendation(package, findings)
+    if fixed is not None:
+        return rec != fixed
+    if rec.endswith(FALLBACK_NOTE) or rec.endswith(FIXED_NOTE):
         return True
     # Texto guardado antes de que existieran estas validaciones.
     source = _grounding_source(_build_prompt(host, package, findings), findings)
@@ -157,6 +203,15 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
                 finding.package_version = package.version
                 if finding.status == "resolved":
                     finding.status = "open"
+                if finding.urgency in osv.PROVISIONAL_URGENCIES:
+                    # Hallazgos de antes de guardar la urgencia, o que Debian
+                    # todavia no evaluo: puede haber cambiado desde ayer.
+                    try:
+                        vuln = await osv.get_vuln(vuln_id)
+                        finding.urgency = osv.extract_urgency(vuln, package.name, ecosystem)
+                        finding.severity = osv.extract_severity(vuln, finding.urgency)
+                    except Exception:
+                        logger.warning("No se pudo actualizar la urgencia de %s", vuln_id)
                 pkg_findings.append(finding)
                 continue
 
@@ -166,13 +221,15 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
                 logger.exception("Fallo al pedir detalle de %s", vuln_id)
                 continue
 
+            urgency = osv.extract_urgency(vuln, package.name, ecosystem)
             finding = VulnerabilityFinding(
                 host_id=host.id,
                 package_name=package.name,
                 package_version=package.version,
                 vuln_id=vuln_id,
                 summary=vuln.get("summary") or vuln.get("details", "")[:300],
-                severity=osv.extract_severity(vuln),
+                severity=osv.extract_severity(vuln, urgency),
+                urgency=urgency,
                 fixed_version=osv.extract_fixed_version(vuln, package.name, ecosystem),
                 source_url=osv.extract_source_url(vuln),
             )

@@ -6,6 +6,7 @@
   <p>Software instalado cruzado contra OSV.dev (CVEs reales), con una recomendacion de la IA por paquete. Se revisa una vez al dia.</p>
   <p style="font-size: var(--text-xs); color: var(--text-muted);">
     "Version corregida" es el dato real de OSV.dev. La recomendacion de la IA es prosa generada por un modelo chico: puede equivocarse en un numero; si no coinciden, confia en "Version corregida".
+    "Debian: sin evaluar" significa que el equipo de seguridad de Debian todavia no clasifico ese CVE; muchos son de las ultimas semanas.
   </p>
 </div>
 
@@ -33,14 +34,19 @@
 </section>
 
 <script>
-const severityClass = { critical: 'crit', warning: 'warn' };
+const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
+const URGENCY_LABELS = { unimportant: 'sin importancia', 'not yet assigned': 'sin evaluar', low: 'baja', medium: 'media', high: 'alta' };
+function urgencyLabel(u) { return u ? (URGENCY_LABELS[u] || u) : 'sin dato'; }
+// Igual que vuln_scan.is_third_party_build.
+function isThirdPartyBuild(version) { return /pve|proxmox/i.test(version || ''); }
+let showNoise = false;
 let hostNames = {};
 // Sobrevive al refresco automatico de 30s, que redibuja la tabla.
 const expandedGroups = new Set();
 
 // Resumenes de OSV y texto de la IA: no se insertan como HTML crudo.
 function esc(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function formatDate(iso) {
@@ -124,29 +130,47 @@ async function loadVulnerabilities() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(f);
   }
-  const sorted = [...groups.entries()].sort(([, a], [, b]) => {
-    const crit = (g) => g.filter(f => f.severity === 'critical').length;
-    return crit(b) - crit(a) || b.length - a.length;
-  });
+  const crit = (g) => g.filter(f => f.severity === 'critical').length;
+  const relevant = (g) => g.filter(f => f.urgency !== 'unimportant').length;
+  const sorted = [...groups.entries()].sort(([, a], [, b]) =>
+    crit(b) - crit(a) || relevant(b) - relevant(a) || b.length - a.length);
+  // Paquetes donde Debian clasifica todos los CVEs como "unimportant": van
+  // aparte y colapsados (en un Proxmox real eran ~1/3 de los hallazgos).
+  const main = sorted.filter(([, items]) => relevant(items) > 0);
+  const noise = sorted.filter(([, items]) => relevant(items) === 0);
+  const noiseCves = noise.reduce((n, [, items]) => n + items.length, 0);
 
-  const rows = sorted.map(([key, items]) => {
+  const renderGroup = ([key, items]) => {
     const first = items[0];
-    const crit = items.filter(f => f.severity === 'critical').length;
+    const nCrit = crit(items);
     const open = items.filter(f => f.status === 'open').length;
+    const unimportant = items.length - relevant(items);
+    const untriaged = items.filter(f => !f.urgency || f.urgency === 'not yet assigned').length;
     const rec = items.find(f => f.ai_recommendation)?.ai_recommendation;
     const fixed = [...new Set(items.map(f => f.fixed_version).filter(Boolean))];
     const fixedText = fixed.length ? esc(fixed.slice(0, 2).join(', ')) + (fixed.length > 2 ? ` (+${fixed.length - 2})` : '') : '-';
     const isOpen = expandedGroups.has(key);
+    const thirdParty = isThirdPartyBuild(first.package_version)
+      ? ` <span class="badge neutral" title="Compilado por Proxmox: OSV compara contra el paquete de Debian, puede no aplicar">build de Proxmox</span>`
+      : '';
+    const breakdown = [
+      untriaged ? `${untriaged} sin evaluar por Debian` : '',
+      unimportant ? `${unimportant} sin importancia` : '',
+      `${open} sin reconocer`,
+    ].filter(Boolean).join(' · ');
 
     const cveRows = items.map(f => {
       const action = f.status === 'open'
-        ? `<button class="sm ghost" data-ack="${f.id}">Reconocer</button>`
-        : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${f.status}</span>`;
+        ? `<button class="sm ghost" data-ack="${esc(f.id)}">Reconocer</button>`
+        : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${esc(f.status)}</span>`;
       return `
         <tr class="vuln-cve-row" data-group="${esc(key)}" ${isOpen ? '' : 'hidden'}>
           <td></td>
           <td><a href="${esc(f.source_url || '#')}" target="_blank" rel="noopener">${esc(f.vuln_id)}</a></td>
-          <td><span class="badge ${severityClass[f.severity] || 'warn'}">${esc(f.severity)}</span></td>
+          <td>
+            <span class="badge ${severityClass[f.severity] || 'warn'}">${esc(f.severity)}</span>
+            <div style="color: var(--text-muted); font-size: var(--text-xs);">Debian: ${esc(urgencyLabel(f.urgency))}</div>
+          </td>
           <td style="color: var(--text-secondary);">${esc(f.summary || 'sin resumen')}</td>
           <td>${esc(f.fixed_version || '-')}</td>
           <td>${action}</td>
@@ -156,28 +180,41 @@ async function loadVulnerabilities() {
     return `
       <tr>
         <td>${esc(hostNames[first.host_id] || first.host_id)}</td>
-        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span></td>
+        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span>${thirdParty}</td>
         <td>
-          <div>${items.length} CVE${items.length === 1 ? '' : 's'}${crit ? ` · <span class="badge crit">${crit} criticas</span>` : ''}</div>
-          <div style="color: var(--text-muted); font-size: var(--text-xs);">${open} sin reconocer</div>
+          <div>${items.length} CVE${items.length === 1 ? '' : 's'}${nCrit ? ` · <span class="badge crit">${nCrit} criticas</span>` : ''}</div>
+          <div style="color: var(--text-muted); font-size: var(--text-xs);">${breakdown}</div>
           <button class="sm ghost" data-toggle-group="${esc(key)}">${isOpen ? 'Ocultar CVEs' : 'Ver CVEs'}</button>
         </td>
         <td>${rec ? esc(rec) : '<span style="color:var(--text-muted)">(pendiente)</span>'}</td>
         <td>${fixedText}</td>
         <td></td>
       </tr>${cveRows}`;
-  }).join('');
+  };
 
-  wrap.innerHTML = `
+  const table = (groupsToRender) => `
     <table class="data vulns-table">
       <colgroup>
         <col style="width:11%"><col style="width:17%"><col style="width:14%">
         <col style="width:39%"><col style="width:12%"><col style="width:7%">
       </colgroup>
       <thead><tr><th>Host</th><th>Paquete</th><th>Vulnerabilidades</th><th>Recomendacion</th><th>Version corregida</th><th></th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>${resolvedNote}`;
+      <tbody>${groupsToRender.map(renderGroup).join('')}</tbody>
+    </table>`;
 
+  const noiseSection = noise.length ? `
+    <div style="margin-top: var(--space-4);">
+      <button class="sm ghost" id="toggle-noise">${showNoise ? 'Ocultar' : 'Mostrar'} ${noise.length} paquetes sin importancia segun Debian (${noiseCves} CVEs)</button>
+      <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">
+        Debian los marca "unimportant": no afectan a su paquete, no tienen impacto practico, o el paquete no tiene soporte de seguridad (como binutils). No publica correccion ni los sigue, por eso figuran para todas las versiones, aun con CVEs de hace anos.
+      </p>
+      ${showNoise ? table(noise) : ''}
+    </div>` : '';
+
+  wrap.innerHTML = (main.length ? table(main) : `<div class="empty-state"><p>Ningun paquete con vulnerabilidades que Debian considere relevantes.</p></div>`)
+    + noiseSection + resolvedNote;
+
+  wrap.querySelector('#toggle-noise')?.addEventListener('click', () => { showNoise = !showNoise; loadVulnerabilities(); });
   wrap.querySelectorAll('[data-ack]').forEach(btn => {
     btn.addEventListener('click', () => acknowledge(btn.dataset.ack));
   });

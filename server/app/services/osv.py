@@ -47,10 +47,32 @@ async def get_vuln(vuln_id: str) -> dict:
         return resp.json()
 
 
-def extract_severity(vuln: dict) -> str:
+UNIMPORTANT = "unimportant"
+# Urgencias que Debian puede cambiar al hacer triage: se vuelven a consultar.
+PROVISIONAL_URGENCIES = {None, "not yet assigned"}
+
+
+def extract_urgency(vuln: dict, package_name: str, ecosystem: str) -> str | None:
+    """Urgencia que asigno el tracker de seguridad de Debian (unimportant,
+    low, medium, high, not yet assigned). Los avisos DEBIAN-CVE-* no traen
+    database_specific.severity: sin esto todos salian "warning" y no habia
+    forma de separar los 174 "unimportant" de un host real (binutils:
+    "not covered by security support") del resto."""
+    for affected in vuln.get("affected", []):
+        pkg = affected.get("package", {})
+        if pkg.get("name") == package_name and pkg.get("ecosystem") == ecosystem:
+            urgency = (affected.get("ecosystem_specific") or {}).get("urgency")
+            # El tracker a veces agrega marcas como "low**"; solo la palabra.
+            return urgency.strip().rstrip("*").strip().lower() if urgency else None
+    return None
+
+
+def extract_severity(vuln: dict, urgency: str | None = None) -> str:
     db_severity = (vuln.get("database_specific") or {}).get("severity", "")
-    if db_severity.upper() in ("CRITICAL", "HIGH"):
+    if db_severity.upper() in ("CRITICAL", "HIGH") or urgency == "high":
         return "critical"
+    if urgency == UNIMPORTANT:
+        return "info"
     return "warning"
 
 

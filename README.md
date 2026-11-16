@@ -86,7 +86,11 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   (https://security-tracker.debian.org/tracker/CVE-2017-13716). Por eso
   un CVE de binutils 2.29 aparece contra 2.44. En un Proxmox real, 174
   de 591 hallazgos eran `unimportant` y 417 todavia no tenian urgencia
-  asignada. Prox Secure todavia no guarda esa urgencia.
+  asignada. Prox Secure guarda esa urgencia: los paquetes con todos sus
+  CVEs `unimportant` van a una seccion colapsada en `/vulnerabilities` y
+  reciben un texto fijo, sin IA. Los paquetes compilados por Proxmox
+  (version con `pve`, como `frr 10.6.1-1+pve3`) se marcan aparte,
+  porque OSV los compara contra el paquete de Debian, que es otra version.
 - No hay sistema de migraciones (Alembic ni similar): `create_all` solo
   crea tablas nuevas, nunca agrega columnas a una tabla existente. Si
   actualizas desde una base de datos vieja y algo tira
