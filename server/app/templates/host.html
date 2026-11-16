@@ -365,6 +365,10 @@ async function loadSystemReport() {
       <div><div class="report-fact-label">RAM</div><div class="report-fact-value">${r.mem_total_mb ? Math.round(r.mem_total_mb) + " MB" : "-"}</div></div>
       <div><div class="report-fact-label">Disco</div><div class="report-fact-value">${r.disk_total_gb ? Math.round(r.disk_total_gb) + " GB" : "-"}</div></div>
       <div><div class="report-fact-label">Ultimo informe</div><div class="report-fact-value">${formatDate(data.generated_at)}</div></div>
+      <div><div class="report-fact-label">Logins SSH / Proxmox</div><div class="report-fact-value">${
+        r.auth_log_source === 'journal' ? 'vigilados (journal)'
+        : r.auth_log_source ? `vigilados (${esc(r.auth_log_source)})`
+        : ('auth_log_source' in r ? 'sin fuente legible' : 'agente sin soporte')}</div></div>
     </div>
     ${tagGroup("Servicios detectados", r.services || [], "Ninguno reconocido.")}
     ${tagGroup("Puertos en escucha", ports, "Ninguno detectado.")}

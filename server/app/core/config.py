@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     ids_window_seconds: int = 60
     ids_requests_threshold: int = 50  # requests de una misma IP en la ventana -> flood/fuerza bruta
     ids_404_threshold: int = 15  # 404s de una misma IP en la ventana -> escaneo
+    # Logins fallidos (SSH o web de Proxmox) de una misma IP en la ventana
+    ssh_window_seconds: int = 600
+    ssh_fail_threshold: int = 5
 
     # Escaneo de vulnerabilidades (OSV.dev) sobre el inventario de paquetes
     # que reporta el agente. Una vez al dia por defecto.

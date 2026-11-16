@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LogEntryIn(BaseModel):
@@ -14,6 +14,19 @@ class LogEntryIn(BaseModel):
 
 class LogBatchIn(BaseModel):
     entries: list[LogEntryIn]
+
+
+class AuthEventIn(BaseModel):
+    ts: datetime | None = None
+    service: str = Field(pattern="^(ssh|pve)$")
+    outcome: str = Field(pattern="^(failed|accepted|invalid_user)$")
+    user: str | None = Field(default=None, max_length=64)
+    ip: str = Field(max_length=64)
+    method: str | None = Field(default=None, max_length=32)
+
+
+class AuthEventBatchIn(BaseModel):
+    entries: list[AuthEventIn] = Field(max_length=1000)
 
 
 class ProcessEventIn(BaseModel):
@@ -69,3 +82,6 @@ class SystemReportIn(BaseModel):
     unreadable_log_paths: list[str] = []
     denied_log_dirs: list[str] = []
     service_accounts: list[str] = []
+    # De donde lee el agente los logins SSH/Proxmox: "journal", la ruta de
+    # auth.log, o None (no se vigilan). Agentes viejos no lo mandan.
+    auth_log_source: str | None = None

@@ -50,8 +50,21 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
 - El "aprendizaje" es acumular listas y contar eventos en ventanas de
   tiempo, no un modelo entrenado. Con trafico legitimo raro puede haber
   falsos positivos (y falsos negativos frente a ataques mas sofisticados).
-- El parser de logs solo entiende el formato "combined" de nginx/apache.
-  Otro formato no se va a parsear (se ignora esa linea).
+- El parser de logs HTTP solo entiende el formato "combined" de
+  nginx/apache. Otro formato no se va a parsear (se ignora esa linea).
+- Los logins SSH y los de la interfaz web de Proxmox se leen del journal
+  de systemd (`journalctl`), o de `/var/log/auth.log` si existe. Proxmox
+  VE 8 en adelante no trae rsyslog, asi que no tiene `auth.log`. El agente
+  manda solo lo parseado (cuando, servicio, resultado, usuario, IP), nunca
+  las lineas de log. Se generan tres eventos:
+  - **Fuerza bruta SSH:** `SSH_FAIL_THRESHOLD` logins fallidos de una IP
+    dentro de `SSH_WINDOW_SECONDS` (5 en 10 minutos por defecto). Es
+    critica si prueba root.
+  - **Fuerza bruta en la web de Proxmox:** el mismo criterio.
+  - **Login despues de fallos:** un login exitoso desde una IP que venia
+    fallando (critico).
+
+  Los dos umbrales se ajustan en Configuracion.
 - La vigilancia de procesos es una lista fija de binarios "sospechosos"
   (`bash`, `wget`, `python`, etc.). Una app que legitimamente hace
   `shell_exec` va a generar falsos positivos; por eso requiere aprobacion

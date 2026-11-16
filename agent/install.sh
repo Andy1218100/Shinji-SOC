@@ -477,6 +477,9 @@ def full_report() -> dict:
     report["unreadable_log_paths"] = log_info["unreadable"]
     report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()
+    import auth_watch  # aca para no cargar subprocess de journal al importar discovery
+
+    report["auth_log_source"] = auth_watch.detect_source()
     return report
 PROXSECURE_EMBED_3_EOF
 
@@ -565,8 +568,169 @@ async def send(client: httpx.AsyncClient, base_url: str, headers: dict) -> int:
     return len(packages)
 PROXSECURE_EMBED_4_EOF
 
+mkdir -p "$(dirname "$INSTALL_DIR/auth_watch.py")"
+cat > "$INSTALL_DIR/auth_watch.py" <<'PROXSECURE_EMBED_5_EOF'
+"""Intentos de inicio de sesion por SSH y en la interfaz web de Proxmox.
+
+Fuente: el journal de systemd (journalctl). Proxmox VE 8 en adelante no
+instala rsyslog, asi que no hay /var/log/auth.log
+(https://pve.proxmox.com/wiki/Fail2ban). En hosts con rsyslog se usa
+/var/log/auth.log. El usuario del agente esta en el grupo "adm", que puede
+leer el journal del sistema.
+
+Se parsea aca y al servidor solo va lo necesario (cuando, servicio,
+resultado, usuario, IP): las lineas de log completas no salen del host.
+
+Formatos (OpenSSH auth.c):
+  "Failed password for [invalid user ]USER from IP port N ssh2"
+  "Accepted publickey for USER from IP port N ssh2: ..."
+  "Invalid user USER from IP port N"
+("maximum authentication attempts exceeded" no se cuenta: sshd ya registra
+un "Failed ..." por cada intento y se contaria dos veces.)
+Proxmox (pvedaemon): "authentication failure; rhost=IP user=USER msg=..."
+"""
+
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+from datetime import datetime, timezone
+
+logger = logging.getLogger("auth_watch")
+
+STATE_PATH = os.environ.get(
+    "PROX_SECURE_AUTH_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
+)
+AUTH_LOG = "/var/log/auth.log"
+MAX_ENTRIES_PER_POLL = 5000
+
+# sshd y, desde OpenSSH 9.8 (Debian 13), sshd-session para cada conexion;
+# pvedaemon para el login de la interfaz web de Proxmox. Con "+" journalctl
+# combina los grupos con OR.
+JOURNAL_MATCHES = [
+    "_SYSTEMD_UNIT=ssh.service", "+", "_SYSTEMD_UNIT=sshd.service", "+",
+    "SYSLOG_IDENTIFIER=sshd", "+", "SYSLOG_IDENTIFIER=sshd-session", "+",
+    "_SYSTEMD_UNIT=pvedaemon.service",
+]
+
+_SSH_RESULT = re.compile(r"\b(?P<result>Accepted|Failed) (?P<method>\S+) for (?:invalid user )?(?P<user>\S*) from (?P<ip>\S+) port \d+")
+_SSH_INVALID = re.compile(r"\bInvalid user (?P<user>\S*) from (?P<ip>\S+) port \d+")
+_PVE_FAILURE = re.compile(r"\bauthentication failure; rhost=(?P<ip>\S+) user=(?P<user>\S+) msg=")
+
+
+def _clean_ip(ip: str) -> str:
+    # pvedaemon escucha en IPv6 y loguea las IPv4 como ::ffff:1.2.3.4
+    return ip[7:] if ip.lower().startswith("::ffff:") else ip
+
+
+def parse_message(message: str, ts: datetime) -> dict | None:
+    base = {"ts": ts.isoformat()}
+    if m := _PVE_FAILURE.search(message):
+        return {**base, "service": "pve", "outcome": "failed", "user": m["user"][:64], "ip": _clean_ip(m["ip"]), "method": "password"}
+    if m := _SSH_RESULT.search(message):
+        outcome = "accepted" if m["result"] == "Accepted" else "failed"
+        return {**base, "service": "ssh", "outcome": outcome, "user": m["user"][:64], "ip": _clean_ip(m["ip"]), "method": m["method"][:32]}
+    if m := _SSH_INVALID.search(message):
+        return {**base, "service": "ssh", "outcome": "invalid_user", "user": m["user"][:64], "ip": _clean_ip(m["ip"]), "method": ""}
+    return None
+
+
+def _load_state() -> dict:
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    with open(STATE_PATH, "w", encoding="utf-8") as fh:
+        json.dump(state, fh)
+
+
+def detect_source() -> str | None:
+    """"journal", la ruta de auth.log, o None si no hay de donde leer."""
+    if shutil.which("journalctl"):
+        try:
+            r = subprocess.run(["journalctl", "-n", "1", "-q", "--no-pager", "_SYSTEMD_UNIT=systemd-journald.service"],
+                               capture_output=True, text=True, timeout=15)
+            # Sin permiso journalctl no falla: avisa que solo se ven los mensajes del propio usuario.
+            denied = "insufficient permissions" in r.stderr or "not seeing messages" in r.stderr
+            if r.returncode == 0 and not denied:
+                return "journal"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    if os.access(AUTH_LOG, os.R_OK):
+        return AUTH_LOG
+    return None
+
+
+def _message_text(value) -> str:
+    # journalctl -o json manda MESSAGE como lista de bytes si no es UTF-8 valido.
+    if isinstance(value, list):
+        return bytes(v for v in value if isinstance(v, int)).decode("utf-8", "replace")
+    return str(value or "")
+
+
+def _read_journal(state: dict) -> list[dict]:
+    args = ["journalctl", "-o", "json", "--no-pager", "-q"]
+    cursor = state.get("journal_cursor")
+    # Primera vez: solo lo de ahora en adelante, no todo el historico.
+    args += ["--after-cursor", cursor] if cursor else ["--since", "-1min"]
+    r = subprocess.run(args + JOURNAL_MATCHES, capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(f"journalctl fallo: {r.stderr.strip()[:200]}")
+    entries = []
+    for line in r.stdout.splitlines()[-MAX_ENTRIES_PER_POLL:]:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        state["journal_cursor"] = rec.get("__CURSOR", state.get("journal_cursor"))
+        try:
+            ts = datetime.fromtimestamp(int(rec["__REALTIME_TIMESTAMP"]) / 1_000_000, tz=timezone.utc)
+        except (KeyError, ValueError):
+            ts = datetime.now(timezone.utc)
+        parsed = parse_message(_message_text(rec.get("MESSAGE")), ts)
+        if parsed:
+            entries.append(parsed)
+    return entries
+
+
+def _read_auth_log(state: dict) -> list[dict]:
+    inode = os.stat(AUTH_LOG).st_ino
+    saved = state.get("auth_log") or {}
+    if not saved:
+        offset = os.path.getsize(AUTH_LOG)
+    elif saved.get("inode") != inode:
+        offset = 0
+    else:
+        offset = saved.get("offset", 0)
+    entries = []
+    now = datetime.now(timezone.utc)
+    with open(AUTH_LOG, "r", encoding="utf-8", errors="replace") as fh:
+        fh.seek(offset)
+        for line in fh:
+            # Se lee cada 15 s: la hora de llegada alcanza y evita parsear
+            # los distintos formatos de fecha de rsyslog.
+            parsed = parse_message(line, now)
+            if parsed:
+                entries.append(parsed)
+        state["auth_log"] = {"inode": inode, "offset": fh.tell()}
+    return entries[-MAX_ENTRIES_PER_POLL:]
+
+
+def read_new_entries(source: str) -> list[dict]:
+    state = _load_state()
+    entries = _read_journal(state) if source == "journal" else _read_auth_log(state)
+    _save_state(state)
+    return entries
+PROXSECURE_EMBED_5_EOF
+
 mkdir -p "$(dirname "$INSTALL_DIR/log_tailer.py")"
-cat > "$INSTALL_DIR/log_tailer.py" <<'PROXSECURE_EMBED_5_EOF'
+cat > "$INSTALL_DIR/log_tailer.py" <<'PROXSECURE_EMBED_6_EOF'
 """Lee nuevas lineas de logs de acceso (formato 'combined' de nginx/apache)
 y las devuelve como entradas estructuradas para mandar al servidor.
 
@@ -658,10 +822,10 @@ def read_new_entries(log_paths: list[str]) -> list[dict]:
 
     _save_state(state)
     return entries
-PROXSECURE_EMBED_5_EOF
+PROXSECURE_EMBED_6_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/main.py")"
-cat > "$INSTALL_DIR/main.py" <<'PROXSECURE_EMBED_6_EOF'
+cat > "$INSTALL_DIR/main.py" <<'PROXSECURE_EMBED_7_EOF'
 """Agente Prox Secure: un solo proceso con varias tareas concurrentes.
 
 - discovery: lo primero que hace el agente al arrancar es describir el
@@ -693,6 +857,7 @@ import commands
 import config
 import discovery
 import inventory
+import auth_watch
 import log_tailer
 import metrics
 import process_watch
@@ -725,6 +890,27 @@ async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, log
         except Exception:
             logger.exception("Fallo enviando logs")
         await asyncio.sleep(10)
+
+
+async def auth_loop(client: httpx.AsyncClient, base_url: str, headers: dict) -> None:
+    """Intentos de login por SSH y en la interfaz web de Proxmox (ver
+    auth_watch). Si el host no tiene journal legible ni auth.log, no hace nada."""
+    source = await asyncio.to_thread(auth_watch.detect_source)
+    if not source:
+        logger.warning("Sin journal legible ni /var/log/auth.log: no se vigilan los logins SSH")
+        return
+    logger.info("Vigilando logins SSH/Proxmox desde %s", source)
+    while True:
+        try:
+            entries = await asyncio.to_thread(auth_watch.read_new_entries, source)
+            for start in range(0, len(entries), 1000):
+                resp = await client.post(
+                    f"{base_url}/api/v1/auth-events/ingest", json={"entries": entries[start:start + 1000]}, headers=headers
+                )
+                resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo enviando intentos de login")
+        await asyncio.sleep(15)
 
 
 async def process_loop(client: httpx.AsyncClient, base_url: str, headers: dict, pw_config: dict) -> None:
@@ -817,6 +1003,7 @@ async def main() -> None:
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
             logs_loop(client, base_url, headers, log_paths),
             process_loop(client, base_url, headers, process_watch_cfg),
+            auth_loop(client, base_url, headers),
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
@@ -825,10 +1012,10 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-PROXSECURE_EMBED_6_EOF
+PROXSECURE_EMBED_7_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/metrics.py")"
-cat > "$INSTALL_DIR/metrics.py" <<'PROXSECURE_EMBED_7_EOF'
+cat > "$INSTALL_DIR/metrics.py" <<'PROXSECURE_EMBED_8_EOF'
 import os
 import time
 from datetime import datetime, timezone
@@ -901,10 +1088,10 @@ def collect() -> dict:
         "net_tx_kbps": net_tx_kbps,
         "uptime_seconds": int(time.time() - psutil.boot_time()),
     }
-PROXSECURE_EMBED_7_EOF
+PROXSECURE_EMBED_8_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/process_watch.py")"
-cat > "$INSTALL_DIR/process_watch.py" <<'PROXSECURE_EMBED_8_EOF'
+cat > "$INSTALL_DIR/process_watch.py" <<'PROXSECURE_EMBED_9_EOF'
 """Vigila procesos de cuentas de servicio (www-data, nginx, etc.) buscando
 ejecucion de binarios que normalmente no deberian correr bajo esas cuentas
 (shells, intepretes, herramientas de red) -- indicador clasico de webshell
@@ -1007,17 +1194,17 @@ def scan(service_users: list[str]) -> list[dict]:
 
     _reported_pids.intersection_update(live_pids)
     return anomalies
-PROXSECURE_EMBED_8_EOF
+PROXSECURE_EMBED_9_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/requirements.txt")"
-cat > "$INSTALL_DIR/requirements.txt" <<'PROXSECURE_EMBED_9_EOF'
+cat > "$INSTALL_DIR/requirements.txt" <<'PROXSECURE_EMBED_10_EOF'
 psutil==6.1.0
 httpx==0.27.2
 PyYAML==6.0.2
-PROXSECURE_EMBED_9_EOF
+PROXSECURE_EMBED_10_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/kill_process.sh")"
-cat > "$INSTALL_DIR/kill_process.sh" <<'PROXSECURE_EMBED_10_EOF'
+cat > "$INSTALL_DIR/kill_process.sh" <<'PROXSECURE_EMBED_11_EOF'
 #!/usr/bin/env bash
 # Mata un proceso SOLO si su cmdline actual todavia contiene la cadena
 # esperada, para evitar matar un PID reciclado que ya no es el proceso
@@ -1041,11 +1228,11 @@ fi
 
 kill -9 "$PID"
 echo "pid $PID terminado (cmdline: $CMDLINE)"
-PROXSECURE_EMBED_10_EOF
+PROXSECURE_EMBED_11_EOF
 chmod 755 "$INSTALL_DIR/kill_process.sh"
 
 mkdir -p "$(dirname "$INSTALL_DIR/grant_log_access.sh")"
-cat > "$INSTALL_DIR/grant_log_access.sh" <<'PROXSECURE_EMBED_11_EOF'
+cat > "$INSTALL_DIR/grant_log_access.sh" <<'PROXSECURE_EMBED_12_EOF'
 #!/usr/bin/env bash
 # Da a prox-secure permiso de LECTURA (via ACL -- nunca toca duenos ni
 # permisos existentes, nunca agrega escritura) sobre una carpeta o
@@ -1105,12 +1292,12 @@ else
 fi
 
 echo "acceso de lectura otorgado a prox-secure sobre $RESOLVED"
-PROXSECURE_EMBED_11_EOF
+PROXSECURE_EMBED_12_EOF
 chmod 755 "$INSTALL_DIR/grant_log_access.sh"
 
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
 mkdir -p "$(dirname "$INSTALL_DIR/config.yaml")"
-cat > "$INSTALL_DIR/config.yaml" <<'PROXSECURE_EMBED_12_EOF'
+cat > "$INSTALL_DIR/config.yaml" <<'PROXSECURE_EMBED_13_EOF'
 # Copiar a config.yaml y completar con los datos reales del host.
 server_url: "http://TU_SERVIDOR:8000"
 api_key: "LA_API_KEY_DEL_HOST"
@@ -1143,7 +1330,7 @@ command_poll_interval_seconds: 10
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
 # agent/fail2ban/jail.d/proxsecure.conf).
 fail2ban_jail: proxsecure
-PROXSECURE_EMBED_12_EOF
+PROXSECURE_EMBED_13_EOF
 
   echo "Creado $INSTALL_DIR/config.yaml con valores de ejemplo."
   echo "Editalo para activar log_paths/service_users a mano si el autodescubrimiento no alcanza."
@@ -1162,7 +1349,7 @@ chown -R prox-secure:prox-secure "$INSTALL_DIR"
 
 # fail2ban: jail dedicado para bloqueos manuales via panel
 mkdir -p "$(dirname "/etc/fail2ban/filter.d/proxsecure.conf")"
-cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_13_EOF'
+cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_14_EOF'
 [Definition]
 # Este filtro nunca matchea nada a proposito: el jail "proxsecure" solo se
 # usa para bloqueos MANUALES disparados desde el panel
@@ -1170,27 +1357,33 @@ cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_13_EOF'
 # automatica via fail2ban mismo (eso lo hace el motor IDS del servidor).
 failregex = ^PROXSECURE_NUNCA_MATCHEA_ESTO$
 ignoreregex =
-PROXSECURE_EMBED_13_EOF
+PROXSECURE_EMBED_14_EOF
 
 mkdir -p "$(dirname "/etc/fail2ban/jail.d/proxsecure.conf")"
-cat > "/etc/fail2ban/jail.d/proxsecure.conf" <<'PROXSECURE_EMBED_14_EOF'
+cat > "/etc/fail2ban/jail.d/proxsecure.conf" <<'PROXSECURE_EMBED_15_EOF'
+# logpath: archivo propio y vacio (lo crea install.sh). El filtro nunca
+# matchea: este jail solo recibe bloqueos manuales desde el panel.
 [proxsecure]
 enabled = true
 filter = proxsecure
-logpath = /var/log/auth.log
+logpath = /var/log/prox-secure-fail2ban.log
 backend = polling
 maxretry = 999999
 findtime = 86400
 bantime = 3600
 action = %(action_)s
-PROXSECURE_EMBED_14_EOF
+PROXSECURE_EMBED_15_EOF
 
+# El jail no lee logs (solo recibe bloqueos manuales), pero fail2ban exige
+# que el logpath exista. Antes era /var/log/auth.log, que no existe en
+# Proxmox VE 8+ (sin rsyslog): el jail no arrancaba y bloquear no hacia nada.
+touch /var/log/prox-secure-fail2ban.log
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
 mkdir -p "$(dirname "/etc/sudoers.d/prox-secure-agent")"
-cat > "/etc/sudoers.d/prox-secure-agent" <<'PROXSECURE_EMBED_15_EOF'
+cat > "/etc/sudoers.d/prox-secure-agent" <<'PROXSECURE_EMBED_16_EOF'
 
 Cmnd_Alias PROXSECURE_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /usr/bin/fail2ban-client set * unbanip *, \
@@ -1198,12 +1391,12 @@ Cmnd_Alias PROXSECURE_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /opt/prox-secure-agent/grant_log_access.sh *
 
 prox-secure ALL=(root) NOPASSWD: PROXSECURE_CMDS
-PROXSECURE_EMBED_15_EOF
+PROXSECURE_EMBED_16_EOF
 chmod 440 "/etc/sudoers.d/prox-secure-agent"
 
 visudo -c -f /etc/sudoers.d/prox-secure-agent
 mkdir -p "$(dirname "/etc/systemd/system/prox-secure-agent.service")"
-cat > "/etc/systemd/system/prox-secure-agent.service" <<'PROXSECURE_EMBED_16_EOF'
+cat > "/etc/systemd/system/prox-secure-agent.service" <<'PROXSECURE_EMBED_17_EOF'
 [Unit]
 Description=Prox Secure - agente de monitoreo
 After=network-online.target
@@ -1221,7 +1414,7 @@ Group=prox-secure
 
 [Install]
 WantedBy=multi-user.target
-PROXSECURE_EMBED_16_EOF
+PROXSECURE_EMBED_17_EOF
 
 systemctl daemon-reload
 systemctl enable prox-secure-agent

@@ -29,6 +29,7 @@ import commands
 import config
 import discovery
 import inventory
+import auth_watch
 import log_tailer
 import metrics
 import process_watch
@@ -61,6 +62,27 @@ async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, log
         except Exception:
             logger.exception("Fallo enviando logs")
         await asyncio.sleep(10)
+
+
+async def auth_loop(client: httpx.AsyncClient, base_url: str, headers: dict) -> None:
+    """Intentos de login por SSH y en la interfaz web de Proxmox (ver
+    auth_watch). Si el host no tiene journal legible ni auth.log, no hace nada."""
+    source = await asyncio.to_thread(auth_watch.detect_source)
+    if not source:
+        logger.warning("Sin journal legible ni /var/log/auth.log: no se vigilan los logins SSH")
+        return
+    logger.info("Vigilando logins SSH/Proxmox desde %s", source)
+    while True:
+        try:
+            entries = await asyncio.to_thread(auth_watch.read_new_entries, source)
+            for start in range(0, len(entries), 1000):
+                resp = await client.post(
+                    f"{base_url}/api/v1/auth-events/ingest", json={"entries": entries[start:start + 1000]}, headers=headers
+                )
+                resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo enviando intentos de login")
+        await asyncio.sleep(15)
 
 
 async def process_loop(client: httpx.AsyncClient, base_url: str, headers: dict, pw_config: dict) -> None:
@@ -153,6 +175,7 @@ async def main() -> None:
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
             logs_loop(client, base_url, headers, log_paths),
             process_loop(client, base_url, headers, process_watch_cfg),
+            auth_loop(client, base_url, headers),
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),

@@ -300,4 +300,7 @@ def full_report() -> dict:
     report["unreadable_log_paths"] = log_info["unreadable"]
     report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()
+    import auth_watch  # aca para no cargar subprocess de journal al importar discovery
+
+    report["auth_log_source"] = auth_watch.detect_source()
     return report

@@ -5,6 +5,7 @@ machine learning entrenado. "Aprende" en el sentido de que acumula, por
 host, los user-agents y rutas sospechosas vistas, no de que entrene pesos.
 """
 
+import asyncio
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -14,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.host import Host
-from app.models.security import IngestedRequest, SecurityEvent
-from app.schemas.logs import LogEntryIn
+from app.core.db import SessionLocal
+from app.models.security import AuthAttempt, IngestedRequest, SecurityEvent
+from app.schemas.logs import AuthEventIn, LogEntryIn
 from app.services import ai, geoip
 from app.services.event_bus import security_events_bus
 
@@ -99,6 +101,24 @@ def build_event_prompt(host: Host, kind: str, source_ip: str, detail: dict, sugg
             "pero tambien lo hacen scripts legitimos del sistema. Es un evento local, no hay IP de origen."
             + _process_signals(str(detail.get("cmdline") or ""), str(detail.get("parent_cmdline") or ""))
         )
+    elif kind in ("ssh_brute_force", "pve_brute_force"):
+        service = SERVICE_LABEL.get(detail.get("service"), "el servicio")
+        facts = (
+            f"La IP {source_ip} fallo {detail.get('failures')} intentos de inicio de sesion en {service} del host "
+            f"'{host.name}' en {window} segundos (el umbral es {settings.ssh_fail_threshold}), probando "
+            f"{detail.get('distinct_users')} usuarios distintos"
+            + (", entre ellos root" if detail.get("root_targeted") else "")
+            + ". Muchos usuarios distintos o root sugieren un ataque automatizado; pocos intentos con un mismo "
+            "usuario pueden ser alguien que olvido su contrasena."
+        )
+    elif kind == "login_after_failures":
+        service = SERVICE_LABEL.get(detail.get("service"), "el servicio")
+        facts = (
+            f"La IP {source_ip} inicio sesion con exito en {service} del host '{host.name}' como "
+            f"{_quoted(detail.get('user'), 64)} (metodo {_quoted(detail.get('method'), 32)}), despues de "
+            f"{detail.get('failures')} intentos fallidos en {window} segundos. Puede ser un atacante que adivino "
+            "la contrasena o un usuario legitimo que se equivoco varias veces."
+        )
     elif kind == "brute_force":
         facts = (
             f"La IP {source_ip} hizo {detail.get('requests_in_window')} peticiones HTTP en {window} segundos al "
@@ -176,13 +196,23 @@ async def create_event(
     await session.refresh(event)
     security_events_bus.publish({"event_id": str(event.id)})
 
+    # En segundo plano: con la IA en CPU un resumen tarda decenas de segundos
+    # y la peticion del agente que trajo el evento corta a los 30 s.
+    asyncio.create_task(_summarize(event.id, build_event_prompt(host, kind, source_ip, detail, suggested_action)))
+    return event
+
+
+async def _summarize(event_id, prompt: str) -> None:
     try:
-        event.ai_summary = await ai.ask(build_event_prompt(host, kind, source_ip, detail, suggested_action))
-        await session.commit()
+        summary = await ai.ask(prompt)
     except Exception:
         logger.exception("No se pudo generar el resumen de IA para el evento de seguridad")
-
-    return event
+        return
+    async with SessionLocal() as session:
+        event = await session.get(SecurityEvent, event_id)
+        if event is not None:
+            event.ai_summary = summary
+            await session.commit()
 
 
 async def process_log_entries(session: AsyncSession, host: Host, entries: list[LogEntryIn]) -> None:
@@ -257,3 +287,66 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
                 ip,
                 {"not_found_in_window": not_found, "window_seconds": settings.ids_window_seconds},
             )
+
+
+AUTH_RETENTION_DAYS = 7
+SERVICE_LABEL = {"ssh": "SSH", "pve": "la interfaz web de Proxmox"}
+
+
+async def process_auth_events(session: AsyncSession, host: Host, entries: list[AuthEventIn]) -> None:
+    """Fuerza bruta: muchos logins fallidos de una IP en la ventana.
+    Login despues de fallos: un login exitoso desde una IP que venia
+    fallando, posible clave adivinada (critico)."""
+    now = datetime.now(timezone.utc)
+    for e in entries:
+        session.add(AuthAttempt(host_id=host.id, ts=e.ts or now, service=e.service, outcome=e.outcome,
+                                username=e.user, ip=e.ip, method=e.method))
+    await session.commit()
+
+    window_start = now - timedelta(seconds=settings.ssh_window_seconds)
+    threshold = settings.ssh_fail_threshold
+
+    async def failures(ip: str, service: str | None = None) -> list[AuthAttempt]:
+        q = select(AuthAttempt).where(
+            AuthAttempt.host_id == host.id, AuthAttempt.ip == ip,
+            AuthAttempt.outcome == "failed", AuthAttempt.ts >= window_start,
+        )
+        if service:
+            q = q.where(AuthAttempt.service == service)
+        return list((await session.execute(q)).scalars().all())
+
+    for service in ("ssh", "pve"):
+        for ip in {e.ip for e in entries if e.service == service and e.outcome == "failed"}:
+            fails = await failures(ip, service)
+            kind = f"{service}_brute_force"
+            if len(fails) < threshold or await _open_event(session, host.id, kind, ip):
+                continue
+            users = sorted({f.username or "?" for f in fails})
+            root = any((f.username or "").split("@")[0] == "root" for f in fails)
+            await create_event(
+                session, host, kind, ip,
+                {"service": service, "failures": len(fails), "window_seconds": settings.ssh_window_seconds,
+                 "users": users[:8], "distinct_users": len(users), "root_targeted": root},
+                severity="critical" if root or len(fails) >= 3 * threshold else "warning",
+            )
+
+    for e in entries:
+        if e.outcome != "accepted":
+            continue
+        fails = await failures(e.ip)
+        if len(fails) < threshold or await _open_event(session, host.id, "login_after_failures", e.ip):
+            continue
+        await create_event(
+            session, host, "login_after_failures", e.ip,
+            {"service": e.service, "user": e.user, "method": e.method, "failures": len(fails),
+             "window_seconds": settings.ssh_window_seconds},
+            severity="critical",
+        )
+
+    # Purga barata (indice por ts): esto es solo una ventana de deteccion.
+    await session.execute(
+        AuthAttempt.__table__.delete().where(
+            AuthAttempt.host_id == host.id, AuthAttempt.ts < now - timedelta(days=AUTH_RETENTION_DAYS)
+        )
+    )
+    await session.commit()

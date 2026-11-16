@@ -80,6 +80,7 @@ emit_file "commands.py"          '$INSTALL_DIR/commands.py'
 emit_file "config.py"            '$INSTALL_DIR/config.py'
 emit_file "discovery.py"         '$INSTALL_DIR/discovery.py'
 emit_file "inventory.py"         '$INSTALL_DIR/inventory.py'
+emit_file "auth_watch.py"        '$INSTALL_DIR/auth_watch.py'
 emit_file "log_tailer.py"        '$INSTALL_DIR/log_tailer.py'
 emit_file "main.py"              '$INSTALL_DIR/main.py'
 emit_file "metrics.py"           '$INSTALL_DIR/metrics.py'
@@ -117,6 +118,10 @@ emit_file "fail2ban/filter.d/proxsecure.conf" '/etc/fail2ban/filter.d/proxsecure
 emit_file "fail2ban/jail.d/proxsecure.conf"   '/etc/fail2ban/jail.d/proxsecure.conf'
 
 cat >> "$OUT" <<'MID3_EOF'
+# El jail no lee logs (solo recibe bloqueos manuales), pero fail2ban exige
+# que el logpath exista. Antes era /var/log/auth.log, que no existe en
+# Proxmox VE 8+ (sin rsyslog): el jail no arrancaba y bloquear no hacia nada.
+touch /var/log/prox-secure-fail2ban.log
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 
