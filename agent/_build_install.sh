@@ -22,7 +22,9 @@ emit_file() {
   {
     echo "mkdir -p \"\$(dirname \"$dest\")\""
     echo "cat > \"$dest\" <<'${delim}'"
-    cat "$src"
+    # Sin CR: una copia de trabajo en Windows puede tener CRLF y el archivo
+    # se instala en Linux.
+    tr -d '\r' < "$src"
     echo "${delim}"
     if [[ -n "$mode" ]]; then
       echo "chmod $mode \"$dest\""

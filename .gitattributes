@@ -1,3 +1,3 @@
 # Los scripts corren en Linux (contenedores y servidores): siempre LF.
-# Con CRLF fallan con "$'': command not found".
+# Con CRLF bash falla con "$'\r': command not found".
 *.sh text eol=lf
