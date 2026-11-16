@@ -1,6 +1,9 @@
 services:
   db:
-    image: timescale/timescaledb:latest-pg16
+    # Version fija: el binario de TimescaleDB tiene que coincidir con la
+    # extension instalada en la base (ALTER EXTENSION al actualizar) y con
+    # la de los respaldos. Ver README, "Actualizar versiones".
+    image: timescale/timescaledb:2.32.0-pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-proxsecure}
@@ -17,7 +20,10 @@ services:
       retries: 10
 
   ollama:
-    image: ollama/ollama:latest
+    # Version fija: con "latest" cualquier "docker compose pull" cambiaba el
+    # motor de la IA sin aviso (la basura de la IA aparecio con la 0.40.16).
+    # Ver README, "Actualizar versiones".
+    image: ollama/ollama:0.40.16
     restart: unless-stopped
     environment:
       # Desactiva la cache de prompts en RAM de llama-server (--cache-ram,
@@ -77,7 +83,7 @@ services:
 
   backup:
     # Misma imagen que la base: su pg_dump es de la misma version.
-    image: timescale/timescaledb:latest-pg16
+    image: timescale/timescaledb:2.32.0-pg16
     restart: unless-stopped
     env_file:
       - .env

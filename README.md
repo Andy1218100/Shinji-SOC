@@ -723,6 +723,38 @@ claude mcp add --scope user prox-secure-audit -- python "C:/ruta/a/prox secure/t
    Secure con prox-secure-audit". Cada lote consume parte del limite de
    tu suscripcion: conviene ir de a un lote.
 
+## Actualizar versiones
+
+Las imagenes de `docker-compose.yml` tienen version fija:
+`ollama/ollama:0.40.16`, `timescale/timescaledb:2.32.0-pg16` y
+`caddy:2.11.9-alpine`. Con `latest`, cualquier `docker compose pull`
+cambiaba el motor de la IA o de la base sin aviso. Para actualizar, de a
+una por vez:
+
+**Ollama**
+
+1. Cambia el tag en `docker-compose.yml`.
+2. Corre `docker compose pull ollama && docker compose up -d ollama`.
+3. Revisa que las recomendaciones de la IA no salgan con basura: el
+   servidor rechaza esas respuestas y lo registra como "Respuesta de IA
+   invalida" en `docker compose logs server`.
+4. Si empeora, vuelve al tag anterior.
+
+**TimescaleDB**
+
+1. Haz un respaldo (Configuracion > Respaldos > Respaldar ahora).
+2. Cambia el tag en los servicios `db` y `backup`, con la misma version
+   en los dos.
+3. Corre `docker compose pull db backup && docker compose up -d db backup`.
+4. Actualiza la extension, que no se actualiza sola:
+
+```bash
+docker compose exec db psql -U proxsecure -d proxsecure -c "ALTER EXTENSION timescaledb UPDATE;"
+```
+
+Los respaldos se restauran con la misma version de TimescaleDB con la que
+se hicieron.
+
 ## Tests
 
 Corren con `unittest`, de la biblioteca estandar de Python, asi que no
