@@ -1355,7 +1355,10 @@ cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_14_EOF'
 # usa para bloqueos MANUALES disparados desde el panel
 # (fail2ban-client set proxsecure banip/unbanip <ip>), no para deteccion
 # automatica via fail2ban mismo (eso lo hace el motor IDS del servidor).
-failregex = ^PROXSECURE_NUNCA_MATCHEA_ESTO$
+# fail2ban exige <HOST> en todo failregex: sin el rechaza la configuracion
+# ("No failure-id group") y no arranca ningun jail, ni el sshd de Debian.
+# El archivo que lee el jail esta siempre vacio, asi que nunca coincide.
+failregex = ^PROXSECURE_NUNCA_MATCHEA_ESTO <HOST>$
 ignoreregex =
 PROXSECURE_EMBED_14_EOF
 
@@ -1380,6 +1383,15 @@ PROXSECURE_EMBED_15_EOF
 touch /var/log/prox-secure-fail2ban.log
 systemctl enable --now fail2ban
 systemctl restart fail2ban
+# Sin esto un error de configuracion pasaba en silencio: fail2ban arranca,
+# falla al cargar los jails y se cierra, y "Bloquear IP" no hace nada.
+sleep 2
+if systemctl is-active --quiet fail2ban && fail2ban-client status proxsecure >/dev/null 2>&1; then
+  echo "fail2ban activo con el jail proxsecure (bloqueos desde el panel)."
+else
+  echo "AVISO: fail2ban no quedo activo, los bloqueos de IP desde el panel no van a funcionar." >&2
+  echo "       Revisa: fail2ban-client -t; tail -n 30 /var/log/fail2ban.log" >&2
+fi
 
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
 mkdir -p "$(dirname "/etc/sudoers.d/prox-secure-agent")"
