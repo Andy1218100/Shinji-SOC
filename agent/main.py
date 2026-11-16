@@ -21,6 +21,7 @@ usan sudo acotado (ver sudoers/prox-secure-agent).
 """
 
 import asyncio
+import os
 import logging
 
 import httpx
@@ -155,7 +156,11 @@ async def main() -> None:
 
     logger.info("Agente Prox Secure iniciado, servidor=%s", base_url)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
+    # PROX_SECURE_CA_FILE apunta a su certificado raiz. Sin la variable se
+    # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
+    verify = os.environ.get("PROX_SECURE_CA_FILE") or True
+    async with httpx.AsyncClient(timeout=30, verify=verify) as client:
         # Lo primero que hace el agente, antes de arrancar a monitorear:
         # describir el sistema. El resto de los loops usa ese resultado
         # para personalizarse a este host en particular.

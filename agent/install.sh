@@ -10,6 +10,14 @@ set -euo pipefail
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
 INSTALL_DIR="/opt/prox-secure-agent"
+# Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
+# red local, ver README). Al reinstalar con ". .env && install.sh ..." se
+# toma el que ya estaba configurado.
+CA_FILE="${3:-${PROX_SECURE_CA_FILE:-}}"
+if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
+  echo "No existe el certificado $CA_FILE" >&2
+  exit 1
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root (sudo)." >&2
@@ -849,6 +857,7 @@ usan sudo acotado (ver sudoers/prox-secure-agent).
 """
 
 import asyncio
+import os
 import logging
 
 import httpx
@@ -983,7 +992,11 @@ async def main() -> None:
 
     logger.info("Agente Prox Secure iniciado, servidor=%s", base_url)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
+    # PROX_SECURE_CA_FILE apunta a su certificado raiz. Sin la variable se
+    # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
+    verify = os.environ.get("PROX_SECURE_CA_FILE") or True
+    async with httpx.AsyncClient(timeout=30, verify=verify) as client:
         # Lo primero que hace el agente, antes de arrancar a monitorear:
         # describir el sistema. El resto de los loops usa ese resultado
         # para personalizarse a este host en particular.
@@ -1343,6 +1356,13 @@ cat > "$INSTALL_DIR/.env" <<EOF
 PROX_SECURE_SERVER_URL=${SERVER_URL}
 PROX_SECURE_API_KEY=${API_KEY}
 EOF
+if [ -n "$CA_FILE" ]; then
+  if [ "$(realpath "$CA_FILE")" != "$INSTALL_DIR/ca.crt" ]; then
+    cp "$CA_FILE" "$INSTALL_DIR/ca.crt"
+  fi
+  echo "PROX_SECURE_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
+  echo "Usando la CA de $CA_FILE para verificar el HTTPS del servidor."
+fi
 chmod 600 "$INSTALL_DIR/.env"
 
 chown -R prox-secure:prox-secure "$INSTALL_DIR"

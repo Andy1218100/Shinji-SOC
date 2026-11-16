@@ -12,3 +12,4 @@ server/data/*.mmdb
 docker-compose.override.yml
 .mcp.json
 backups/
+caddy/prox-secure-ca.crt

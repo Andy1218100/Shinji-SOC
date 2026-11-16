@@ -46,6 +46,14 @@ set -euo pipefail
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
 INSTALL_DIR="/opt/prox-secure-agent"
+# Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
+# red local, ver README). Al reinstalar con ". .env && install.sh ..." se
+# toma el que ya estaba configurado.
+CA_FILE="${3:-${PROX_SECURE_CA_FILE:-}}"
+if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
+  echo "No existe el certificado $CA_FILE" >&2
+  exit 1
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root (sudo)." >&2
@@ -109,6 +117,13 @@ cat > "$INSTALL_DIR/.env" <<EOF
 PROX_SECURE_SERVER_URL=${SERVER_URL}
 PROX_SECURE_API_KEY=${API_KEY}
 EOF
+if [ -n "$CA_FILE" ]; then
+  if [ "$(realpath "$CA_FILE")" != "$INSTALL_DIR/ca.crt" ]; then
+    cp "$CA_FILE" "$INSTALL_DIR/ca.crt"
+  fi
+  echo "PROX_SECURE_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
+  echo "Usando la CA de $CA_FILE para verificar el HTTPS del servidor."
+fi
 chmod 600 "$INSTALL_DIR/.env"
 
 chown -R prox-secure:prox-secure "$INSTALL_DIR"

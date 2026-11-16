@@ -47,12 +47,33 @@ services:
       ollama:
         condition: service_started
     ports:
-      - "8000:8000"
+      # HTTP directo (sin cifrar). Una vez que el panel y los agentes usan
+      # HTTPS (caddy, abajo), SERVER_BIND=127.0.0.1 en el .env lo deja
+      # accesible solo desde este equipo.
+      - "${SERVER_BIND:-0.0.0.0}:8000:8000"
     volumes:
       - ./server:/app
       - ./.env:/config/.env
       # Lectura del estado de los respaldos y pedido de "Respaldar ahora".
       - ./backups:/backups
+
+  caddy:
+    # HTTPS delante del servidor: ver caddy/Caddyfile y la seccion HTTPS del README.
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - server
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificados y la CA interna (su clave privada queda en el volumen,
+      # fuera de la carpeta del proyecto).
+      - caddy_data:/data
+      - caddy_config:/config
 
   backup:
     # Misma imagen que la base: su pg_dump es de la misma version.
@@ -72,3 +93,5 @@ services:
 volumes:
   db_data:
   ollama_data:
+  caddy_data:
+  caddy_config:

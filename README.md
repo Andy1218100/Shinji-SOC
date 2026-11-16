@@ -77,9 +77,9 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   contrasena por email (no hay servicio de correo en el proyecto): si
   alguien se queda afuera, un admin le resetea la contrasena desde
   `/users`. Tampoco hay log de auditoria de quien aprobo que accion.
-  Igual que siempre: pensado para uso propio en red interna, no para
-  exponer el dashboard a internet sin un proxy con HTTPS adelante (y en
-  ese caso, poner `SESSION_COOKIE_SECURE=true`).
+  Igual que siempre: pensado para uso propio en red interna. Si el panel
+  se expone, que sea por el HTTPS integrado (ver la seccion HTTPS) y con
+  `SESSION_COOKIE_SECURE=true`.
 - El mapa de ataques necesita que configures una license key de MaxMind
   (gratis); sin eso, los eventos se ven en la lista pero sin punto en el
   mapa.
@@ -507,6 +507,69 @@ solo en esa maquina, crea un `docker-compose.override.yml` (ya esta en
 services:
   ollama:
     cpus: "4"
+```
+
+## HTTPS
+
+El contenedor `caddy` pone HTTPS delante del servidor (`caddy/Caddyfile`).
+Redirige HTTP a HTTPS, agrega cabeceras de seguridad (HSTS, `nosniff`,
+`X-Frame-Options`, `Referrer-Policy`) y reenvia sin buffer los eventos en
+vivo del panel. Se configura en el `.env`, con uno de dos modos.
+
+**Red local** (por defecto). Caddy firma con su propia CA:
+
+```
+PANEL_ADDRESS=localhost, 192.168.1.10
+PANEL_TLS=tls internal
+PANEL_DEFAULT_SNI=192.168.1.10
+```
+
+`PANEL_DEFAULT_SNI` tiene que ser la IP con la que se conectan los
+agentes. Quien se conecta por IP no manda el nombre del sitio (SNI), y
+sin esta opcion Caddy corta la conexion.
+
+1. **Copia el certificado raiz de la CA.** Es publico; la clave privada
+   queda en el volumen de Caddy:
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy/prox-secure-ca.crt
+```
+
+2. **Confia en el en Windows**, como administrador. Firefox usa su propio
+   almacen: alli se importa desde su configuracion de certificados.
+
+```bash
+certutil -addstore -f Root caddy\prox-secure-ca.crt
+```
+
+3. **Abre el panel** en `https://localhost`.
+
+4. **Pasa cada agente a HTTPS.** Copia el certificado al host y reinstala
+   con la URL `https://` y la ruta del certificado como tercer argumento.
+   Las reinstalaciones siguientes con `. .env` lo conservan:
+
+```bash
+scp caddy/prox-secure-ca.crt root@servidor:/tmp/prox-secure-ca.crt
+```
+
+```bash
+sudo bash -c '. /opt/prox-secure-agent/.env && bash /tmp/install.sh https://192.168.1.10 "$PROX_SECURE_API_KEY" /tmp/prox-secure-ca.crt'
+```
+
+5. **Cierra el HTTP directo.** Con todo pasado a HTTPS, pon
+   `SERVER_BIND=127.0.0.1` en el `.env`, para que el puerto 8000 sin
+   cifrar quede solo para este equipo, y recrea el servidor. Despues activa
+   "Cookies solo por HTTPS" en Configuracion: desde ese momento
+   `http://localhost:8000` ya no permite iniciar sesion.
+
+**Dominio publico** (certificado de Let's Encrypt automatico). El dominio
+tiene que apuntar a este servidor y los puertos 80 y 443 tienen que llegar
+desde internet. Los agentes no necesitan certificado extra:
+
+```
+PANEL_ADDRESS=panel.midominio.com
+PANEL_TLS=tls tu@correo.com
+PANEL_DEFAULT_SNI=panel.midominio.com
 ```
 
 ## Configuracion desde la pagina
