@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Text, func
+from sqlalchemy import String, JSON, DateTime, ForeignKey, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +20,11 @@ class SystemReport(Base):
     host_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosts.id"), unique=True)
     raw: Mapped[dict] = mapped_column(JSON, default=dict)
     ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Auditoria externa (services/audit.py): quien escribio ai_summary
+    # ("ia_local" o "claude") y cuando lo reviso el auditor.
+    ai_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    audit_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

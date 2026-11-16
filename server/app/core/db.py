@@ -33,6 +33,12 @@ async def ensure_columns(conn: AsyncConnection) -> None:
         "ALTER TABLE hosts ADD COLUMN IF NOT EXISTS last_vuln_scan_at TIMESTAMPTZ",
         "ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS rec_source VARCHAR(16)",
         "ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS urgency_checked_at TIMESTAMPTZ",
+        "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS ai_source VARCHAR(16)",
+        "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS audited_at TIMESTAMPTZ",
+        "ALTER TABLE security_events ADD COLUMN IF NOT EXISTS audit_note TEXT",
+        "ALTER TABLE system_reports ADD COLUMN IF NOT EXISTS ai_source VARCHAR(16)",
+        "ALTER TABLE system_reports ADD COLUMN IF NOT EXISTS audited_at TIMESTAMPTZ",
+        "ALTER TABLE system_reports ADD COLUMN IF NOT EXISTS audit_note TEXT",
         "ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS audited_at TIMESTAMPTZ",
         "ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS audit_note TEXT",
     ):

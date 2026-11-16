@@ -42,26 +42,40 @@ _ENV = _load_env_file()
 BASE_URL = os.environ.get("PROX_SECURE_URL", "http://localhost:8000").rstrip("/")
 TOKEN = os.environ.get("PROX_SECURE_AUDIT_TOKEN") or _ENV.get("AUDIT_API_TOKEN", "")
 
-AUDIT_GUIDE = """Criterios para auditar cada item (una recomendacion de la IA local, un modelo de 3B):
-- Debe ser coherente con los datos: si "versiones_corregidas" esta vacio, NO hay parche publicado en Debian y la recomendacion no puede decir que actualizar lo corrige ni citar una version "corregida" (las versiones upstream de los resumenes, como "before 0.23.0", no estan en Debian).
-- No debe recomendar desinstalar paquetes base del sistema (gestor de paquetes, shell, librerias del sistema) ni inventar versiones, CVEs o datos.
-- "unimportant" de Debian = sin impacto practico; "not yet assigned" = Debian todavia no lo evaluo.
-- verdict "ok" si es correcta y util; "fix" con "corrected_recommendation" (2-3 frases en espanol, solo con datos del item) si no.
-- Cuando el mismo error se repita en varios items, agrega UNA regla general corta (max 300 caracteres) en "reglas" para que la IA local no lo repita; usa "package" solo para reglas de un paquete puntual. No repitas reglas que ya esten en "reglas_activas".
-Los datos ya vienen minimizados (hosts como H1, H2; sin IPs, nombres ni usuarios): no pidas mas datos del host."""
+AUDIT_GUIDE = """Tres tipos de informe (parametro "tipo" de obtener_informe). Para cada item: verdict "ok" si el texto de la IA local (un modelo de 3B) es correcto y util, o "fix" con "corrected_recommendation" (2-3 frases en espanol, solo con datos del item) si no.
+
+vulnerabilidades (recomendacion por paquete):
+- Si "versiones_corregidas" esta vacio NO hay parche en Debian: no puede decir que actualizar lo corrige ni citar versiones upstream de los resumenes ("before 0.23.0").
+- No recomendar desinstalar paquetes base del sistema ni inventar versiones o CVEs.
+- "unimportant" = sin impacto practico segun Debian; "not yet assigned" = Debian aun no lo evaluo.
+
+eventos (resumen de un evento de seguridad):
+- Debe ser coherente con "hechos" y "tipo": no inventar ataques, IPs, usuarios ni archivos.
+- process_anomaly: juzgar con "senales_intrusion" / "senales_legitimo"; un proceso lanzado por systemd sin senales de intrusion no es un ataque. La accion es terminar el proceso, no bloquear una IP.
+- Fuerza bruta: muchos usuarios distintos o root sugieren ataque automatizado. Decir claramente si conviene la "accion_sugerida".
+
+informes (lectura del informe del host):
+- Solo afirmar lo que esta en "hechos" (servicios, puertos, logs, cuentas): no inventar el tipo de servidor ni servicios. Senalar logs sin permiso o carpetas sin acceso si los hay.
+
+Reglas: cuando un error se repita, agrega UNA regla corta (max 300 caracteres) en "reglas" con "ambito" (vulnerabilidades, eventos o informes) para que la IA local no lo repita; "sobre" opcional (un paquete o un tipo de evento). No repitas las de "reglas_activas".
+
+Los datos ya vienen minimizados: hosts como H1, H2; IPs como seudonimos IP-xxxxxx (puedes usarlos en el texto corregido: se reemplazan por la IP real al guardar); sin usuarios ni rutas personales. No pidas mas datos."""
 
 TOOLS = [
     {
         "name": "obtener_informe",
         "description": (
-            "Devuelve un lote compacto de recomendaciones de la IA local de Prox Secure que todavia no "
-            "fueron auditadas, con los datos de OSV necesarios para juzgarlas y las reglas activas.\n\n" + AUDIT_GUIDE
+            "Devuelve un lote compacto de textos de la IA local de Prox Secure que todavia no fueron "
+            "auditados (recomendaciones de vulnerabilidades, resumenes de eventos de seguridad o informes "
+            "de hosts), con los datos necesarios para juzgarlos y las reglas activas.\n\n" + AUDIT_GUIDE
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
+                "tipo": {"type": "string", "enum": ["vulnerabilidades", "eventos", "informes"],
+                         "default": "vulnerabilidades"},
                 "limite": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20,
-                           "description": "Cuantos paquetes traer (cada uno ~200-250 tokens)."}
+                           "description": "Cuantos items traer (cada uno ~200-300 tokens)."},
             },
         },
     },
@@ -80,7 +94,7 @@ TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string", "description": "El 'id' del item del informe, ej. 'H1|thrift'."},
+                            "id": {"type": "string", "description": "El 'id' del item del informe (ej. 'H1|thrift', 'E|<uuid>', 'R|H1')."},
                             "verdict": {"type": "string", "enum": ["ok", "fix"]},
                             "corrected_recommendation": {"type": "string"},
                             "note": {"type": "string", "description": "Que estaba mal, en una frase."},
@@ -94,7 +108,8 @@ TOOLS = [
                         "type": "object",
                         "properties": {
                             "rule": {"type": "string", "maxLength": 300},
-                            "package": {"type": "string", "description": "Opcional: paquete fuente al que aplica."},
+                            "ambito": {"type": "string", "enum": ["vulnerabilidades", "eventos", "informes"]},
+                            "sobre": {"type": "string", "description": "Opcional: paquete fuente o tipo de evento al que aplica."},
                         },
                         "required": ["rule"],
                     },
@@ -127,7 +142,10 @@ def _http(method: str, path: str, body: dict | None = None) -> dict:
 def _call_tool(name: str, args: dict) -> str:
     if name == "obtener_informe":
         limit = int(args.get("limite") or 20)
-        report = _http("GET", f"/api/v1/audit/report?limit={max(1, min(limit, 100))}")
+        tipo = args.get("tipo") or "vulnerabilidades"
+        if tipo not in ("vulnerabilidades", "eventos", "informes"):
+            raise RuntimeError("tipo debe ser vulnerabilidades, eventos o informes")
+        report = _http("GET", f"/api/v1/audit/report?limit={max(1, min(limit, 100))}&tipo={tipo}")
         return json.dumps(report, ensure_ascii=False, separators=(",", ":"))
     if name == "enviar_auditoria":
         body = {"items": args.get("items") or [], "rules": args.get("reglas") or []}

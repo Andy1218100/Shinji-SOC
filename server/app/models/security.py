@@ -23,6 +23,11 @@ class SecurityEvent(Base):
     status: Mapped[str] = mapped_column(String(16), default="open")  # open|approved|dismissed
 
     ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Auditoria externa (services/audit.py): quien escribio ai_summary
+    # ("ia_local" o "claude") y cuando lo reviso el auditor.
+    ai_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    audited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    audit_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     geo_country: Mapped[str | None] = mapped_column(String(64), nullable=True)
     geo_city: Mapped[str | None] = mapped_column(String(128), nullable=True)

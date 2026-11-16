@@ -15,6 +15,9 @@ class SecurityEventOut(BaseModel):
     suggested_action: str | None
     status: str
     ai_summary: str | None
+    ai_source: str | None = None
+    audited_at: datetime | None = None
+    audit_note: str | None = None
     geo_country: str | None
     geo_city: str | None
     geo_lat: float | None

@@ -8,7 +8,7 @@ from app.core.db import SessionLocal
 from app.models.host import Host
 from app.models.system_report import SystemReport
 from app.schemas.logs import SystemReportIn
-from app.services import ai
+from app.services import ai, audit
 
 logger = logging.getLogger("system_report")
 
@@ -81,6 +81,11 @@ def _build_prompt(host: Host, payload: SystemReportIn) -> str:
     )
 
 
+async def _rules(db: AsyncSession) -> str:
+    """Reglas que dejo el auditor externo para los informes de host."""
+    return audit.rules_text(await audit.active_rules(db, "host_report"), None)
+
+
 async def save_and_summarize(db: AsyncSession, host: Host, payload: SystemReportIn) -> SystemReport:
     report = (
         await db.execute(select(SystemReport).where(SystemReport.host_id == host.id))
@@ -94,7 +99,8 @@ async def save_and_summarize(db: AsyncSession, host: Host, payload: SystemReport
     await db.refresh(report)
 
     try:
-        report.ai_summary = await ai.ask(_build_prompt(host, payload))
+        report.ai_summary = await ai.ask(_build_prompt(host, payload) + await _rules(db))
+        report.ai_source, report.audited_at, report.audit_note = "ia_local", None, None
     except Exception:
         # No dejar el resumen de un escaneo anterior mostrado como si fuera
         # vigente -- mejor mostrar "no se pudo generar" (ver host.html) que
@@ -124,7 +130,8 @@ async def retry_missing_summaries() -> None:
         for report, host in rows:
             try:
                 payload = SystemReportIn.model_validate(report.raw)
-                report.ai_summary = await ai.ask(_build_prompt(host, payload))
+                report.ai_summary = await ai.ask(_build_prompt(host, payload) + await _rules(db))
+                report.ai_source, report.audited_at, report.audit_note = "ia_local", None, None
                 await db.commit()
                 logger.info("Informe de IA regenerado para %s", host.name)
             except Exception:

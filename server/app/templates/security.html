@@ -67,6 +67,13 @@ const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 // Todo lo que viene de la API se escapa: el resumen de IA sale de un prompt
 // con user-agents y rutas que manda cualquiera desde internet (inyeccion
 // de prompt -> HTML), y la IP/tipo vienen de logs parseados en el host.
+// Marca de la auditoria externa (Claude via el servidor MCP).
+function auditBadge(x) {
+  const note = x.audit_note ? ` title="${esc(x.audit_note)}"` : '';
+  if (x.ai_source === 'claude') return `<div><span class="badge ok"${note}>corregido por Claude</span></div>`;
+  if (x.audited_at) return `<div><span class="badge neutral"${note}>revisado por Claude</span></div>`;
+  return '';
+}
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 const MAP_VISIBLE_WINDOW_MS = 10 * 60 * 1000; // la marca/arco de un evento se borra del mapa a los 10 min
 
@@ -266,7 +273,7 @@ async function loadEvents() {
         <td>${esc(ev.kind)}</td>
         <td><span class="badge ${sev}">${esc(ev.severity)}</span></td>
         <td>${esc(ev.source_ip || '-')}${esc(geo)}</td>
-        <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}</td>
+        <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}${auditBadge(ev)}</td>
         <td>${actions}</td>
       </tr>`;
   }).join('');

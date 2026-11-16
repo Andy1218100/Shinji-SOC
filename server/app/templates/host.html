@@ -385,7 +385,9 @@ async function loadSystemReport() {
     )}
     ${tagGroup("Cuentas de servicio que vigila", r.service_accounts || [], "No encontro cuentas de servicio corriendo.")}
     ${data.ai_summary
-      ? `<div class="report-ai-summary">${esc(data.ai_summary)}</div>`
+      ? `<div class="report-ai-summary">${esc(data.ai_summary)}${
+          data.ai_source === 'claude' ? `<div><span class="badge ok" title="${esc(data.audit_note || '')}">corregido por Claude</span></div>`
+          : data.audited_at ? `<div><span class="badge neutral" title="${esc(data.audit_note || '')}">revisado por Claude</span></div>` : ''}</div>`
       : `<p style="color: var(--text-muted); font-size: var(--text-sm);">La IA todavia no genero el informe narrativo.</p>`}
   `;
 

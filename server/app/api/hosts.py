@@ -151,5 +151,8 @@ async def get_system_report(host_id: str, db: AsyncSession = Depends(get_db)):
         "available": True,
         "raw": report.raw,
         "ai_summary": report.ai_summary,
+        "ai_source": report.ai_source,
+        "audited_at": report.audited_at,
+        "audit_note": report.audit_note,
         "generated_at": report.generated_at,
     }
