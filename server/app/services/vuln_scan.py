@@ -76,11 +76,31 @@ def _upgrade_command(package: SourcePackage) -> str:
     return f"apt install --only-upgrade {' '.join(sorted(package.binaries)[:8])}"
 
 
+# Binarios del fuente "linux" que NO son un kernel: cabeceras para compilar
+# programas y herramientas. En un Proxmox real solo estaba linux-libc-dev
+# (el kernel en uso era proxmox-kernel, que OSV no cubre) y salian 294 CVEs
+# del kernel de Debian que no aplican a unas cabeceras.
+_KERNEL_NON_KERNEL_BINARIES = re.compile(r"^(linux-libc-dev|linux-headers-.*|linux-kbuild-.*|linux-base|linux-source.*|linux-doc.*|linux-perf.*|bpftool|usbip|hyperv-daemons)$")
+
+
+def not_applicable_reason(package: SourcePackage) -> str | None:
+    if package.name == "linux" and package.binaries and all(
+        _KERNEL_NON_KERNEL_BINARIES.match(b) for b in package.binaries
+    ):
+        return (
+            f"Solo estan instalados {', '.join(sorted(package.binaries))} (cabeceras/herramientas), no el "
+            "kernel de Debian: estos CVEs son del kernel y no aplican al kernel que corre el host."
+        )
+    return None
+
+
 def _relevant(findings: list[VulnerabilityFinding]) -> list[VulnerabilityFinding]:
     return [f for f in findings if f.urgency != osv.UNIMPORTANT]
 
 
 def _fixed_recommendation(package: SourcePackage, findings: list[VulnerabilityFinding]) -> str | None:
+    if reason := not_applicable_reason(package):
+        return f"{reason} No requiere accion. {FIXED_NOTE}"
     if is_third_party_build(package.version):
         return (
             f"{package.name} {package.version} es un paquete compilado por Proxmox, no el de Debian. "
@@ -248,8 +268,11 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             if finding:
                 finding.last_seen = now
                 finding.package_version = package.version
+                finding.not_applicable = not_applicable_reason(package)
                 if finding.status == "resolved":
                     finding.status = "open"
+                    finding.resolved_at = None
+                    finding.resolution = None
                 if finding.urgency in osv.PROVISIONAL_URGENCIES:
                     # Hallazgos de antes de guardar la urgencia, o que Debian
                     # todavia no evaluo: puede haber cambiado desde ayer.
@@ -279,6 +302,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
                 urgency=urgency,
                 fixed_version=osv.extract_fixed_version(vuln, package.name, ecosystem),
                 source_url=osv.extract_source_url(vuln),
+                not_applicable=not_applicable_reason(package),
             )
             session.add(finding)
             pkg_findings.append(finding)
@@ -303,11 +327,91 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
     # Lo que OSV ya no reporta para la version instalada ahora (paquete
     # actualizado o desinstalado) queda resuelto. Seguro de hacer aca: la
     # consulta a OSV de arriba fue completa o el escaneo ya habria salido.
+    installed = {src.name: src for src in sources}
+    resolved = 0
     for key, finding in existing.items():
         if key not in still_present and finding.status != "resolved":
             finding.status = "resolved"
+            finding.resolved_at = now
+            src = installed.get(finding.package_name)
+            finding.resolution = (
+                f"actualizado a {src.version} (antes {finding.package_version})"
+                if src and src.version != finding.package_version
+                else ("ya no figura en OSV para la version instalada" if src else "paquete desinstalado")
+            )
+            resolved += 1
+    host.last_vuln_scan_at = now
     await session.commit()
+    _last_result[str(host.id)] = {"new": new_findings, "resolved": resolved, "finished_at": now.isoformat()}
     return new_findings
+
+
+# Estado en memoria del escaneo por host (un solo proceso de servidor):
+# "waiting_inventory" (se pidio al agente el inventario actual) o "scanning".
+_state: dict[str, str] = {}
+_waiting_since: dict[str, datetime] = {}
+_last_result: dict[str, dict] = {}
+_locks: dict[str, asyncio.Lock] = {}
+# Un agente responde a send_inventory en ~10 s (sondeo de comandos). Si no
+# llego nada en este tiempo (agente apagado, o version vieja que no conoce
+# el comando), se deja de esperar en vez de quedar "esperando" para siempre.
+WAITING_TIMEOUT_SECONDS = 120
+
+
+def _lock(host_id: str) -> asyncio.Lock:
+    return _locks.setdefault(host_id, asyncio.Lock())
+
+
+def mark_waiting_inventory(host_id: str) -> None:
+    _state[host_id] = "waiting_inventory"
+    _waiting_since[host_id] = datetime.now(timezone.utc)
+
+
+def inventory_request_failed(host_id: str, reason: str) -> None:
+    if _state.get(host_id) == "waiting_inventory":
+        _state.pop(host_id, None)
+        _last_result[host_id] = {"error": reason, "finished_at": datetime.now(timezone.utc).isoformat()}
+
+
+def scan_status(host_id: str) -> dict:
+    since = _waiting_since.get(host_id)
+    if (
+        _state.get(host_id) == "waiting_inventory"
+        and since
+        and (datetime.now(timezone.utc) - since).total_seconds() > WAITING_TIMEOUT_SECONDS
+    ):
+        inventory_request_failed(
+            host_id, "el agente no mando el inventario en 2 minutos (apagado o version sin soporte para este boton)"
+        )
+    return {"state": _state.get(host_id, "idle"), "last_result": _last_result.get(host_id)}
+
+
+async def _locked_scan(session: AsyncSession, host: Host) -> int:
+    """Un solo escaneo a la vez por host: el diario y el de "Escanear ahora"
+    o el que dispara un inventario nuevo pueden coincidir."""
+    host_id = str(host.id)
+    async with _lock(host_id):
+        _state[host_id] = "scanning"
+        try:
+            return await scan_host(session, host)
+        finally:
+            _state.pop(host_id, None)
+
+
+async def scan_host_by_id(host_id) -> None:
+    """Escaneo de un host apenas llega su inventario (envio diario del
+    agente, reinstalacion o "Escanear ahora")."""
+    try:
+        async with SessionLocal() as session:
+            host = (await session.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
+            if host is None:
+                return
+            found = await _locked_scan(session, host)
+            if found:
+                logger.info("Host %s: %d vulnerabilidades nuevas", host.name, found)
+    except Exception:
+        _state.pop(str(host_id), None)
+        logger.exception("Fallo el escaneo de vulnerabilidades del host %s", host_id)
 
 
 async def scan_all_hosts() -> None:
@@ -315,7 +419,7 @@ async def scan_all_hosts() -> None:
         hosts = (await session.execute(select(Host))).scalars().all()
         for host in hosts:
             try:
-                found = await scan_host(session, host)
+                found = await _locked_scan(session, host)
                 if found:
                     logger.info("Host %s: %d vulnerabilidades nuevas", host.name, found)
             except Exception:

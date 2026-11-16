@@ -64,7 +64,9 @@ async function refreshNavBadgeFor(navName, url) {
 
 function refreshNavBadge() {
   refreshNavBadgeFor("security", "/api/v1/security-events?status=open");
-  refreshNavBadgeFor("vulnerabilities", "/api/v1/vulnerabilities?status=open");
+  // Solo lo que tiene solucion publicada: lo que no tiene parche se ve en
+  // la pagina como aviso, pero no suma al contador.
+  refreshNavBadgeFor("vulnerabilities", "/api/v1/vulnerabilities?status=open&actionable=true");
 }
 
 document.addEventListener("DOMContentLoaded", () => {

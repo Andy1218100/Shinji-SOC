@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +9,7 @@ from app.core.db import get_db
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage
 from app.schemas.logs import InventoryIn, LogBatchIn, ProcessEventBatchIn, SystemReportIn
-from app.services import ids, process_anomaly, system_report
+from app.services import ids, process_anomaly, system_report, vuln_scan
 
 router = APIRouter(prefix="/api/v1", tags=["security-ingest"])
 
@@ -58,6 +60,9 @@ async def ingest_inventory(
     if payload.debian_release:
         host.debian_release = payload.debian_release
     await db.commit()
+    # Escanear con este inventario ya, sin esperar al ciclo diario: llega por
+    # el envio diario del agente, al reinstalarlo, o por "Escanear ahora".
+    asyncio.create_task(vuln_scan.scan_host_by_id(host.id))
     return {"status": "ok", "received": len(unique)}
 
 

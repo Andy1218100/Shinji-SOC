@@ -9,6 +9,7 @@ from app.core.db import get_db
 from app.models.host import Host
 from app.models.security import BlockedIP, Command
 from app.schemas.security import CommandOut, CommandResultIn
+from app.services import vuln_scan
 
 router = APIRouter(prefix="/api/v1", tags=["commands"])
 
@@ -42,6 +43,11 @@ async def report_command_result(
     command.status = payload.status
     command.result = payload.result
     command.completed_at = datetime.now(timezone.utc)
+
+    if command.action == "send_inventory" and payload.status != "done":
+        # Agente viejo ("accion desconocida") o fallo al mandar: el panel deja
+        # de mostrar "esperando inventario" y avisa.
+        vuln_scan.inventory_request_failed(str(host.id), f"el agente no pudo mandar el inventario: {payload.result or ''}"[:200])
 
     if command.action == "block_ip" and payload.status == "done":
         db.add(BlockedIP(host_id=host.id, ip=command.payload.get("ip"), reason=f"Comando {command.id}"))

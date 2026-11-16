@@ -12,6 +12,7 @@ import subprocess
 import httpx
 
 import discovery
+import inventory
 
 logger = logging.getLogger("commands")
 
@@ -54,7 +55,17 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
 
     granted_access = False
     for command in commands:
-        ok, output = execute(command, fail2ban_jail)
+        if command["action"] == "send_inventory":
+            # "Escanear ahora" del panel: el servidor escanea apenas recibe
+            # el inventario, con las versiones de este momento (despues de
+            # un apt upgrade, por ejemplo), no las del ultimo envio diario.
+            try:
+                count = await inventory.send(client, base_url, headers)
+                ok, output = True, f"inventario enviado: {count} paquetes"
+            except Exception as exc:
+                ok, output = False, f"fallo enviando inventario: {exc}"[:2000]
+        else:
+            ok, output = execute(command, fail2ban_jail)
         logger.info("Comando %s (%s): %s -> %s", command["id"], command["action"], ok, output)
         await client.post(
             f"{base_url}/api/v1/commands/{command['id']}/result",

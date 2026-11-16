@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_admin
 from app.core.db import get_db
 from app.models.host import Host
+from app.models.security import Command
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
+from app.services import vuln_scan
 from app.schemas.vulnerability import InventoryStatusOut, VulnerabilityFindingOut
 
 router = APIRouter(prefix="/api/v1", tags=["vulnerabilities"])
@@ -14,11 +16,20 @@ router = APIRouter(prefix="/api/v1", tags=["vulnerabilities"])
 @router.get("/vulnerabilities", response_model=list[VulnerabilityFindingOut], dependencies=[Depends(get_current_user)])
 async def list_vulnerabilities(
     status: str | None = Query(default=None),
+    actionable: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
 ):
     stmt = select(VulnerabilityFinding).order_by(VulnerabilityFinding.last_seen.desc())
     if status:
         stmt = stmt.where(VulnerabilityFinding.status == status)
+    if actionable:
+        # Solo lo que se puede arreglar hoy (hay version corregida y aplica
+        # a lo instalado): es lo que cuenta el aviso del menu lateral. Lo que
+        # no tiene parche se muestra en la pagina, pero como aviso.
+        stmt = stmt.where(
+            VulnerabilityFinding.fixed_version.is_not(None),
+            VulnerabilityFinding.not_applicable.is_(None),
+        )
     result = await db.execute(stmt)
     findings = result.scalars().all()
 
@@ -47,6 +58,28 @@ async def acknowledge_vulnerability(finding_id: str, db: AsyncSession = Depends(
     finding.status = "acknowledged"
     await db.commit()
     return {"status": "ok"}
+
+
+@router.post("/vulnerabilities/scan/{host_id}", dependencies=[Depends(require_admin)])
+async def request_scan(host_id: str, db: AsyncSession = Depends(get_db)):
+    """Pide al agente el inventario actual (comando send_inventory, lo toma
+    en ~10 s); el escaneo corre apenas llega (ver ingest_inventory)."""
+    host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
+    if host is None:
+        raise HTTPException(status_code=404, detail="Host no encontrado")
+    db.add(Command(host_id=host.id, action="send_inventory", payload={}))
+    await db.commit()
+    vuln_scan.mark_waiting_inventory(str(host.id))
+    return {"status": "ok"}
+
+
+@router.get("/vulnerabilities/scan-status", dependencies=[Depends(get_current_user)])
+async def scan_status(db: AsyncSession = Depends(get_db)):
+    hosts = (await db.execute(select(Host))).scalars().all()
+    return [
+        {"host_id": str(h.id), "last_scan_at": h.last_vuln_scan_at, **vuln_scan.scan_status(str(h.id))}
+        for h in hosts
+    ]
 
 
 @router.get("/inventory/status", response_model=list[InventoryStatusOut], dependencies=[Depends(get_current_user)])

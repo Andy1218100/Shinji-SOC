@@ -56,6 +56,7 @@ import subprocess
 import httpx
 
 import discovery
+import inventory
 
 logger = logging.getLogger("commands")
 
@@ -98,7 +99,17 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
 
     granted_access = False
     for command in commands:
-        ok, output = execute(command, fail2ban_jail)
+        if command["action"] == "send_inventory":
+            # "Escanear ahora" del panel: el servidor escanea apenas recibe
+            # el inventario, con las versiones de este momento (despues de
+            # un apt upgrade, por ejemplo), no las del ultimo envio diario.
+            try:
+                count = await inventory.send(client, base_url, headers)
+                ok, output = True, f"inventario enviado: {count} paquetes"
+            except Exception as exc:
+                ok, output = False, f"fallo enviando inventario: {exc}"[:2000]
+        else:
+            ok, output = execute(command, fail2ban_jail)
         logger.info("Comando %s (%s): %s -> %s", command["id"], command["action"], ok, output)
         await client.post(
             f"{base_url}/api/v1/commands/{command['id']}/result",
@@ -480,6 +491,8 @@ resto de este agente: fail2ban, apt, etc.).
 import logging
 import subprocess
 
+import httpx
+
 logger = logging.getLogger("inventory")
 
 
@@ -538,6 +551,18 @@ def debian_release() -> str | None:
     except OSError:
         pass
     return None
+
+
+async def send(client: httpx.AsyncClient, base_url: str, headers: dict) -> int:
+    """Junta y manda el inventario. Devuelve cuantos paquetes mando (0 si
+    no es un sistema con dpkg). Lanza excepcion si el servidor falla."""
+    packages = collect()
+    if not packages:
+        return 0
+    payload = {"packages": packages, "debian_release": debian_release()}
+    resp = await client.post(f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers)
+    resp.raise_for_status()
+    return len(packages)
 PROXSECURE_EMBED_4_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/log_tailer.py")"
@@ -747,13 +772,7 @@ async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict
     while True:
         wait = interval
         try:
-            packages = inventory.collect()
-            if packages:
-                payload = {"packages": packages, "debian_release": inventory.debian_release()}
-                resp = await client.post(
-                    f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers
-                )
-                resp.raise_for_status()
+            await inventory.send(client, base_url, headers)
         except Exception:
             logger.exception("Fallo enviando inventario de paquetes, reintento en %ss", INVENTORY_RETRY_SECONDS)
             wait = min(interval, INVENTORY_RETRY_SECONDS)

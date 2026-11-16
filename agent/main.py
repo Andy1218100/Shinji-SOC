@@ -108,13 +108,7 @@ async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict
     while True:
         wait = interval
         try:
-            packages = inventory.collect()
-            if packages:
-                payload = {"packages": packages, "debian_release": inventory.debian_release()}
-                resp = await client.post(
-                    f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers
-                )
-                resp.raise_for_status()
+            await inventory.send(client, base_url, headers)
         except Exception:
             logger.exception("Fallo enviando inventario de paquetes, reintento en %ss", INVENTORY_RETRY_SECONDS)
             wait = min(interval, INVENTORY_RETRY_SECONDS)

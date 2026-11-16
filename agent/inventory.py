@@ -7,6 +7,8 @@ resto de este agente: fail2ban, apt, etc.).
 import logging
 import subprocess
 
+import httpx
+
 logger = logging.getLogger("inventory")
 
 
@@ -65,3 +67,15 @@ def debian_release() -> str | None:
     except OSError:
         pass
     return None
+
+
+async def send(client: httpx.AsyncClient, base_url: str, headers: dict) -> int:
+    """Junta y manda el inventario. Devuelve cuantos paquetes mando (0 si
+    no es un sistema con dpkg). Lanza excepcion si el servidor falla."""
+    packages = collect()
+    if not packages:
+        return 0
+    payload = {"packages": packages, "debian_release": debian_release()}
+    resp = await client.post(f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers)
+    resp.raise_for_status()
+    return len(packages)

@@ -3,7 +3,10 @@
 {% block content %}
 <div class="page-header">
   <h1>Vulnerabilidades</h1>
-  <p>Software instalado cruzado contra OSV.dev (CVEs reales), con una recomendacion de la IA por paquete. Se revisa una vez al dia.</p>
+  <p>Software instalado cruzado contra OSV.dev (CVEs reales), con una recomendacion de la IA por paquete. Se revisa una vez al dia y cada vez que el agente manda su inventario; "Escanear ahora" lo fuerza.</p>
+  <p style="font-size: var(--text-xs); color: var(--text-muted);">
+    El contador del menu lateral solo cuenta lo que tiene solucion publicada (algo que se puede actualizar hoy). Lo que todavia no tiene parche aparece como aviso en "Sin solucion todavia".
+  </p>
   <p style="font-size: var(--text-xs); color: var(--text-muted);">
     "Version corregida" es el dato real de OSV.dev. La recomendacion de la IA es prosa generada por un modelo chico: puede equivocarse en un numero; si no coinciden, confia en "Version corregida".
     "Debian: sin evaluar" significa que el equipo de seguridad de Debian todavia no clasifico ese CVE; muchos son de las ultimas semanas.
@@ -39,7 +42,6 @@ const URGENCY_LABELS = { unimportant: 'sin importancia', 'not yet assigned': 'si
 function urgencyLabel(u) { return u ? (URGENCY_LABELS[u] || u) : 'sin dato'; }
 // Igual que vuln_scan.is_third_party_build.
 function isThirdPartyBuild(version) { return /pve|proxmox/i.test(version || ''); }
-let showNoise = false;
 // OSV evalua el paquete fuente de Debian; se listan los binarios instalados
 // solo si no son simplemente el mismo nombre.
 function binariesNote(f) {
@@ -74,6 +76,41 @@ async function loadHostNames() {
   }
 }
 
+const isAdmin = {{ 'true' if user.role == 'admin' else 'false' }};
+// Secciones colapsables: su estado sobrevive al refresco de 30s.
+const openSections = new Set();
+let scanStatus = {};
+let scanPollTimer = null;
+
+async function loadScanStatus() {
+  try {
+    const res = await fetch('/api/v1/vulnerabilities/scan-status');
+    if (res.ok) {
+      const prev = scanStatus;
+      scanStatus = Object.fromEntries((await res.json()).map(st => [st.host_id, st]));
+      for (const [id, st] of Object.entries(scanStatus)) {
+        const was = prev[id]?.state;
+        if (was && was !== 'idle' && st.state === 'idle' && st.last_result) {
+          if (st.last_result.error) {
+            toast(`No se pudo escanear ${hostNames[id] || 'el host'}: ${st.last_result.error}.`, 'error');
+          } else {
+            toast(`Escaneo de ${hostNames[id] || 'host'} terminado: ${st.last_result.new} nuevas, ${st.last_result.resolved} resueltas.`, 'success');
+            loadVulnerabilities();
+          }
+        }
+      }
+    }
+  } catch (e) { /* se reintenta en el proximo ciclo */ }
+  const busy = Object.values(scanStatus).some(st => st.state !== 'idle');
+  clearTimeout(scanPollTimer);
+  scanPollTimer = setTimeout(async () => { await loadScanStatus(); loadInventoryStatus(); }, busy ? 3000 : 30000);
+}
+
+function scanStateText(st) {
+  if (!st || st.state === 'idle') return '';
+  return st.state === 'waiting_inventory' ? 'Esperando inventario del agente...' : 'Escaneando...';
+}
+
 async function loadInventoryStatus() {
   const wrap = document.getElementById('inventory-wrap');
   let rows;
@@ -91,18 +128,52 @@ async function loadInventoryStatus() {
     return;
   }
 
-  const body = rows.map(r => `
+  const body = rows.map(r => {
+    const st = scanStatus[r.host_id];
+    const busy = st && st.state !== 'idle';
+    const action = isAdmin
+      ? `<button class="sm" data-scan="${esc(r.host_id)}" ${busy ? 'disabled' : ''}>${busy ? esc(scanStateText(st)) : 'Escanear ahora'}</button>`
+      : esc(scanStateText(st));
+    return `
     <tr>
-      <td>${r.host_name}</td>
-      <td>${r.package_count}</td>
+      <td>${esc(r.host_name)}</td>
+      <td>${esc(r.package_count)}</td>
       <td>${formatDate(r.last_collected)}</td>
-    </tr>`).join('');
+      <td>${formatDate(st?.last_scan_at)}</td>
+      <td>${action}</td>
+    </tr>`;
+  }).join('');
 
   wrap.innerHTML = `
     <table class="data">
-      <thead><tr><th>Host</th><th>Paquetes reportados</th><th>Ultimo reporte</th></tr></thead>
+      <thead><tr><th>Host</th><th>Paquetes reportados</th><th>Ultimo inventario</th><th>Ultimo escaneo</th><th></th></tr></thead>
       <tbody>${body}</tbody>
-    </table>`;
+    </table>
+    <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">
+      "Escanear ahora" le pide al agente el inventario actual (lo toma en unos 10 segundos) y escanea apenas llega. Sirve despues de un <code>apt upgrade</code>: lo que quedo parchado pasa a "Resueltas".
+    </p>`;
+
+  wrap.querySelectorAll('[data-scan]').forEach(btn => btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    const res = await adminAction(`/api/v1/vulnerabilities/scan/${btn.dataset.scan}`);
+    if (res) toast('Escaneo pedido: esperando el inventario del agente.', 'success');
+    await loadScanStatus();
+    loadInventoryStatus();
+  }));
+}
+
+// Seccion colapsable: titulo, explicacion y contenido (cerrada por defecto).
+function section(id, title, note, content) {
+  const open = openSections.has(id);
+  return `
+    <div class="vuln-section" style="margin-top: var(--space-5);">
+      <div style="display:flex; align-items:center; gap: var(--space-3);">
+        <h3 style="margin:0;">${title}</h3>
+        <button class="sm ghost" data-section="${id}">${open ? 'Ocultar' : 'Mostrar'}</button>
+      </div>
+      <p style="color: var(--text-muted); font-size: var(--text-xs); margin: var(--space-2) 0;">${note}</p>
+      ${open ? content : ''}
+    </div>`;
 }
 
 async function loadVulnerabilities() {
@@ -117,19 +188,9 @@ async function loadVulnerabilities() {
     return;
   }
 
-  const resolvedCount = findings.filter(f => f.status === 'resolved').length;
+  const resolved = findings.filter(f => f.status === 'resolved')
+    .sort((a, b) => String(b.resolved_at || '').localeCompare(String(a.resolved_at || '')));
   const active = findings.filter(f => f.status !== 'resolved');
-  const resolvedNote = resolvedCount
-    ? `<p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">${resolvedCount} resueltas (el paquete se actualizo o desinstalo y OSV ya no las reporta para la version instalada).</p>`
-    : '';
-
-  if (active.length === 0) {
-    wrap.innerHTML = `
-      <div class="empty-state">
-        <p>Sin vulnerabilidades abiertas. El primer escaneo corre al arrancar el servidor y despues una vez al dia.</p>
-      </div>${resolvedNote}`;
-    return;
-  }
 
   // Una fila por paquete: la recomendacion de la IA es una sola por paquete.
   const groups = new Map();
@@ -140,13 +201,16 @@ async function loadVulnerabilities() {
   }
   const crit = (g) => g.filter(f => f.severity === 'critical').length;
   const relevant = (g) => g.filter(f => f.urgency !== 'unimportant').length;
+  const hasFix = (g) => g.some(f => f.fixed_version);
   const sorted = [...groups.entries()].sort(([, a], [, b]) =>
     crit(b) - crit(a) || relevant(b) - relevant(a) || b.length - a.length);
-  // Paquetes donde Debian clasifica todos los CVEs como "unimportant": van
-  // aparte y colapsados (en un Proxmox real eran ~1/3 de los hallazgos).
-  const main = sorted.filter(([, items]) => relevant(items) > 0);
-  const noise = sorted.filter(([, items]) => relevant(items) === 0);
-  const noiseCves = noise.reduce((n, [, items]) => n + items.length, 0);
+  // Con solucion: se puede actualizar hoy. Sin solucion: aviso, Debian no
+  // publico parche. Ruido: todo "unimportant" o no aplica a lo instalado.
+  const isNoise = ([, items]) => items.every(f => f.not_applicable) || relevant(items) === 0;
+  const withFix = sorted.filter(g => !isNoise(g) && hasFix(g[1]));
+  const noFix = sorted.filter(g => !isNoise(g) && !hasFix(g[1]));
+  const noise = sorted.filter(isNoise);
+  const cves = (gs) => gs.reduce((n, [, items]) => n + items.length, 0);
 
   const renderGroup = ([key, items]) => {
     const first = items[0];
@@ -161,6 +225,8 @@ async function loadVulnerabilities() {
     const thirdParty = isThirdPartyBuild(first.package_version)
       ? ` <span class="badge neutral" title="Compilado por Proxmox: OSV compara contra el paquete de Debian, puede no aplicar">build de Proxmox</span>`
       : '';
+    const notApplicable = first.not_applicable
+      ? ` <span class="badge neutral" title="${esc(first.not_applicable)}">no aplica</span>` : '';
     const breakdown = [
       untriaged ? `${untriaged} sin evaluar por Debian` : '',
       unimportant ? `${unimportant} sin importancia` : '',
@@ -188,7 +254,7 @@ async function loadVulnerabilities() {
     return `
       <tr>
         <td>${esc(hostNames[first.host_id] || first.host_id)}</td>
-        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span>${thirdParty}${binariesNote(first)}</td>
+        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span>${thirdParty}${notApplicable}${binariesNote(first)}</td>
         <td>
           <div>${items.length} CVE${items.length === 1 ? '' : 's'}${nCrit ? ` · <span class="badge crit">${nCrit} criticas</span>` : ''}</div>
           <div style="color: var(--text-muted); font-size: var(--text-xs);">${breakdown}</div>
@@ -210,19 +276,40 @@ async function loadVulnerabilities() {
       <tbody>${groupsToRender.map(renderGroup).join('')}</tbody>
     </table>`;
 
-  const noiseSection = noise.length ? `
-    <div style="margin-top: var(--space-4);">
-      <button class="sm ghost" id="toggle-noise">${showNoise ? 'Ocultar' : 'Mostrar'} ${noise.length} paquetes sin importancia segun Debian (${noiseCves} CVEs)</button>
-      <p style="color: var(--text-muted); font-size: var(--text-xs); margin-top: var(--space-2);">
-        Debian los marca "unimportant": no afectan a su paquete, no tienen impacto practico, o el paquete no tiene soporte de seguridad (como binutils). No publica correccion ni los sigue, por eso figuran para todas las versiones, aun con CVEs de hace anos.
-      </p>
-      ${showNoise ? table(noise) : ''}
-    </div>` : '';
+  const resolvedRows = resolved.slice(0, 300).map(f => `
+        <tr>
+          <td>${esc(hostNames[f.host_id] || f.host_id)}</td>
+          <td>${esc(f.package_name)}</td>
+          <td><a href="${esc(f.source_url || '#')}" target="_blank" rel="noopener">${esc(f.vuln_id)}</a></td>
+          <td style="color: var(--text-secondary);">${esc(f.resolution || 'ya no figura en OSV para la version instalada')}</td>
+          <td>${f.resolved_at ? formatDate(f.resolved_at) : '-'}</td>
+        </tr>`).join('');
+  const resolvedTable = `
+    <table class="data">
+      <thead><tr><th>Host</th><th>Paquete</th><th>CVE</th><th>Motivo</th><th>Resuelta</th></tr></thead>
+      <tbody>${resolvedRows}</tbody>
+    </table>${resolved.length > 300 ? `<p style="color: var(--text-muted); font-size: var(--text-xs);">Se muestran las 300 mas recientes de ${resolved.length}.</p>` : ''}`;
 
-  wrap.innerHTML = (main.length ? table(main) : `<div class="empty-state"><p>Ningun paquete con vulnerabilidades que Debian considere relevantes.</p></div>`)
-    + noiseSection + resolvedNote;
+  const withFixBlock = withFix.length
+    ? `<h3 style="margin: 0 0 var(--space-2);">Con solucion disponible · ${withFix.length} paquetes</h3>${table(withFix)}`
+    : `<div class="empty-state"><p>Nada para actualizar: ninguna vulnerabilidad que aplique tiene solucion publicada todavia.</p></div>`;
 
-  wrap.querySelector('#toggle-noise')?.addEventListener('click', () => { showNoise = !showNoise; loadVulnerabilities(); });
+  wrap.innerHTML = withFixBlock
+    + (noFix.length ? section('nofix', `Sin solucion todavia · ${noFix.length} paquetes, ${cves(noFix)} CVEs`,
+        'Aviso: Debian todavia no publico una version corregida, asi que no hay nada que actualizar hoy. No suman al contador del menu. Cuando salga el parche, el paquete pasa a "Con solucion disponible".',
+        table(noFix)) : '')
+    + (noise.length ? section('noise', `Sin importancia o no aplican · ${noise.length} paquetes, ${cves(noise)} CVEs`,
+        'Debian los marca "unimportant" (no afectan a su paquete, no tienen impacto practico, o el paquete no tiene soporte de seguridad, como binutils), o no aplican a lo instalado (por ejemplo, solo estan las cabeceras del kernel).',
+        table(noise)) : '')
+    + (resolved.length ? section('resolved', `Resueltas · ${resolved.length}`,
+        'CVEs que dejaron de aplicar: el paquete se actualizo o desinstalo y OSV ya no los reporta para la version instalada.',
+        resolvedTable) : '');
+
+  wrap.querySelectorAll('[data-section]').forEach(btn => btn.addEventListener('click', () => {
+    const id = btn.dataset.section;
+    openSections.has(id) ? openSections.delete(id) : openSections.add(id);
+    loadVulnerabilities();
+  }));
   wrap.querySelectorAll('[data-ack]').forEach(btn => {
     btn.addEventListener('click', () => acknowledge(btn.dataset.ack));
   });
@@ -244,10 +331,10 @@ async function acknowledge(id) {
 
 (async () => {
   await loadHostNames();
+  await loadScanStatus();
   loadInventoryStatus();
   loadVulnerabilities();
 })();
-setInterval(loadInventoryStatus, 30000);
 setInterval(loadVulnerabilities, 30000);
 
 document.getElementById('ask-form').addEventListener('submit', async (event) => {

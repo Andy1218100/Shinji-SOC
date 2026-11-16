@@ -417,6 +417,21 @@ distinto por release: el de Debian 12 no sirve en un Debian 13). Los
 paquetes de repos de terceros (`pve-*`/`proxmox-*` en Proxmox, por
 ejemplo) no estan en el ecosistema Debian de OSV y no se revisan.
 
+En `/vulnerabilities`:
+- **Escanear ahora** (admin) le pide al agente el inventario actual con
+  el comando `send_inventory`, y el servidor escanea apenas lo recibe. Sirve
+  despues de un `apt upgrade`. Cada inventario que llega dispara un escaneo
+  de ese host.
+- **Con solucion disponible** son los paquetes con version corregida. Son
+  los unicos que cuentan en el aviso del menu lateral.
+- **Sin solucion todavia** es un aviso: Debian no publico parche, asi que
+  no hay nada que actualizar hoy.
+- **Sin importancia o no aplican** reune los `unimportant` y los CVEs del
+  kernel de Debian cuando solo estan sus cabeceras (`linux-libc-dev`): en
+  Proxmox el kernel en uso es `proxmox-kernel`, que OSV no cubre.
+- **Resueltas** muestra lo que dejo de aplicar, con el motivo ("actualizado
+  a X" o "paquete desinstalado") y la fecha.
+
 ## IA: Ollama local vs Claude
 
 Por defecto todo pasa por Ollama (`AI_BACKEND=ollama`, modelo en
