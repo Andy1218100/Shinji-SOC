@@ -449,6 +449,16 @@ distinto por release: el de Debian 12 no sirve en un Debian 13). Los
 paquetes de repos de terceros (`pve-*`/`proxmox-*` en Proxmox, por
 ejemplo) no estan en el ecosistema Debian de OSV y no se revisan.
 
+El escaneo trabaja en dos fases:
+
+1. **Datos.** Los detalles de OSV se piden juntos, 8 en paralelo con una
+   sola conexion y sin repetir CVEs. La urgencia "sin evaluar" de Debian se
+   reconsulta como maximo una vez al dia.
+2. **IA.** Las recomendaciones se generan despues, sin demorar los datos.
+
+En un Proxmox con ~1500 paquetes, la fase de datos paso de mas de 25
+minutos a 6 segundos (4,6 s en un escaneo sin urgencias para reconsultar).
+
 En `/vulnerabilities`:
 - **Escanear ahora** (admin) le pide al agente el inventario actual con
   el comando `send_inventory`, y el servidor escanea apenas lo recibe. Sirve

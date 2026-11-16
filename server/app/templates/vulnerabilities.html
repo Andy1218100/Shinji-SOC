@@ -113,6 +113,8 @@ async function loadScanStatus() {
       scanStatus = Object.fromEntries((await res.json()).map(st => [st.host_id, st]));
       for (const [id, st] of Object.entries(scanStatus)) {
         const was = prev[id]?.state;
+        // Los datos ya estan guardados cuando empieza la fase de la IA.
+        if (was === 'scanning' && st.state === 'recommending') loadVulnerabilities();
         if (was && was !== 'idle' && st.state === 'idle' && st.last_result) {
           if (st.last_result.error) {
             toast(`No se pudo escanear ${hostNames[id] || 'el host'}: ${st.last_result.error}.`, 'error');
@@ -131,7 +133,8 @@ async function loadScanStatus() {
 
 function scanStateText(st) {
   if (!st || st.state === 'idle') return '';
-  return st.state === 'waiting_inventory' ? 'Esperando inventario del agente...' : 'Escaneando...';
+  if (st.state === 'waiting_inventory') return 'Esperando inventario del agente...';
+  return st.state === 'recommending' ? 'Generando recomendaciones...' : 'Escaneando...';
 }
 
 async function loadInventoryStatus() {

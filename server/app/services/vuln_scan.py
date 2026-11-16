@@ -3,7 +3,7 @@ import logging
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ logger = logging.getLogger("vuln_scan")
 
 
 PROMPT_EXAMPLES = 5
+URGENCY_RECHECK = timedelta(hours=24)
 # Reglas que dejo el auditor externo (ver services/audit.py), cargadas al
 # empezar cada escaneo. Pocas y cortas: cada una alarga el prompt y en CPU
 # eso son segundos por recomendacion.
@@ -278,6 +279,21 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
     }
     still_present: set[tuple[str, str]] = set()
 
+    # Fase 1: datos. Primero se piden juntos (en paralelo, sin repetir) los
+    # detalles que faltan: CVEs nuevos y urgencias provisionales que no se
+    # revisaron en las ultimas 24 h.
+    def needs_detail(name: str, vid: str) -> bool:
+        f = existing.get((name, vid))
+        if f is None:
+            return True
+        return f.urgency in osv.PROVISIONAL_URGENCIES and (
+            f.urgency_checked_at is None or now - f.urgency_checked_at > URGENCY_RECHECK
+        )
+
+    wanted = {vid for package, vuln_ids in zip(sources, results) for vid in vuln_ids if needs_detail(package.name, vid)}
+    details = await osv.get_vulns(wanted) if wanted else {}
+
+    pending_recs: list[tuple[SourcePackage, list[VulnerabilityFinding], bool]] = []
     for package, vuln_ids in zip(sources, results):
         if not vuln_ids:
             continue
@@ -296,24 +312,16 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
                     finding.status = "open"
                     finding.resolved_at = None
                     finding.resolution = None
-                if finding.urgency in osv.PROVISIONAL_URGENCIES:
-                    # Hallazgos de antes de guardar la urgencia, o que Debian
-                    # todavia no evaluo: puede haber cambiado desde ayer.
-                    try:
-                        vuln = await osv.get_vuln(vuln_id)
-                        finding.urgency = osv.extract_urgency(vuln, package.name, ecosystem)
-                        finding.severity = osv.extract_severity(vuln, finding.urgency)
-                    except Exception:
-                        logger.warning("No se pudo actualizar la urgencia de %s", vuln_id)
+                if vuln_id in details and finding.urgency in osv.PROVISIONAL_URGENCIES:
+                    finding.urgency = osv.extract_urgency(details[vuln_id], package.name, ecosystem)
+                    finding.severity = osv.extract_severity(details[vuln_id], finding.urgency)
+                    finding.urgency_checked_at = now
                 pkg_findings.append(finding)
                 continue
 
-            try:
-                vuln = await osv.get_vuln(vuln_id)
-            except Exception:
-                logger.exception("Fallo al pedir detalle de %s", vuln_id)
-                continue
-
+            vuln = details.get(vuln_id)
+            if vuln is None:
+                continue  # fallo el detalle: se reintenta en el proximo escaneo
             urgency = osv.extract_urgency(vuln, package.name, ecosystem)
             finding = VulnerabilityFinding(
                 host_id=host.id,
@@ -323,6 +331,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
                 summary=vuln.get("summary") or vuln.get("details", "")[:300],
                 severity=osv.extract_severity(vuln, urgency),
                 urgency=urgency,
+                urgency_checked_at=now,
                 fixed_version=osv.extract_fixed_version(vuln, package.name, ecosystem),
                 source_url=osv.extract_source_url(vuln),
                 not_applicable=not_applicable_reason(package),
@@ -334,8 +343,6 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             if finding.fixed_version and not finding.not_applicable:
                 new_fixable[package.name] = new_fixable.get(package.name, 0) + 1
 
-        await session.commit()
-
         # Regenerar si cambio el conjunto de CVEs (nuevos o arreglados) o si
         # lo guardado no sirve (ver _needs_new_recommendation).
         dropped = any(
@@ -343,13 +350,9 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             for (name, vid), f in existing.items()
         )
         if pkg_findings and (added or dropped or _needs_new_recommendation(host, package, pkg_findings)):
-            rec = await _generate_recommendation(host, package, pkg_findings)
-            if rec:
-                source = "fija" if rec.endswith(FIXED_NOTE) or rec.endswith(FALLBACK_NOTE) else "ia_local"
-                for f in pkg_findings:
-                    f.ai_recommendation, f.rec_source = rec, source
-                    f.audited_at, f.audit_note = None, None
-                await session.commit()
+            pending_recs.append((package, pkg_findings, added))
+
+    await session.commit()
 
     # Lo que OSV ya no reporta para la version instalada ahora (paquete
     # actualizado o desinstalado) queda resuelto. Seguro de hacer aca: la
@@ -379,6 +382,19 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
             "warning",
         ))
     _last_result[str(host.id)] = {"new": new_findings, "resolved": resolved, "finished_at": now.isoformat()}
+
+    # Fase 2: recomendaciones. Los datos ya estan guardados y visibles; la IA
+    # (decenas de segundos por paquete en CPU) va despues, sin demorarlos.
+    if pending_recs and str(host.id) in _state:
+        _state[str(host.id)] = "recommending"
+    for package, pkg_findings, _ in pending_recs:
+        rec = await _generate_recommendation(host, package, pkg_findings)
+        if rec:
+            source = "fija" if rec.endswith(FIXED_NOTE) or rec.endswith(FALLBACK_NOTE) else "ia_local"
+            for f in pkg_findings:
+                f.ai_recommendation, f.rec_source = rec, source
+                f.audited_at, f.audit_note = None, None
+            await session.commit()
     return new_findings
 
 

@@ -77,5 +77,38 @@ class QueryBatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [1000, 1, 479])
 
 
+class GetVulnsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_parallel_dedup_retry_and_failures(self):
+        hits = {}
+
+        def handler(request):
+            vid = request.url.path.rsplit("/", 1)[-1]
+            hits[vid] = hits.get(vid, 0) + 1
+            if vid == "RATE" and hits[vid] == 1:
+                return httpx.Response(429)  # OSV pide esperar: se reintenta
+            if vid == "BROKEN":
+                return httpx.Response(500)
+            return httpx.Response(200, json={"id": vid})
+
+        real = httpx.AsyncClient
+        osv.httpx.AsyncClient = lambda **kw: real(transport=httpx.MockTransport(handler), **kw)
+        sleeps = []
+
+        async def no_sleep(seconds):
+            sleeps.append(seconds)
+
+        real_sleep = osv.asyncio.sleep
+        osv.asyncio.sleep = no_sleep
+        try:
+            out = await osv.get_vulns(["A", "B", "A", "RATE", "BROKEN"])
+        finally:
+            osv.httpx.AsyncClient = real
+            osv.asyncio.sleep = real_sleep
+        self.assertEqual(set(out), {"A", "B", "RATE"})  # BROKEN falla tras los reintentos
+        self.assertEqual(hits["A"], 1)  # repetido en la lista: se pide una vez
+        self.assertEqual(hits["RATE"], 2)
+        self.assertEqual(hits["BROKEN"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()

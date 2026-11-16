@@ -5,7 +5,12 @@ vulnerabilidad conocida: la IA nunca decide esto por su cuenta, solo
 redacta la recomendacion a partir de lo que OSV devuelve.
 """
 
+import asyncio
+import logging
+
 import httpx
+
+logger = logging.getLogger("osv")
 
 OSV_API = "https://api.osv.dev/v1"
 # Mas de 1000 por request -> 400 "too many queries" (medido contra la API
@@ -38,6 +43,39 @@ async def query_batch(packages: list[tuple[str, str]], ecosystem: str = "Debian"
                 pending = next_pending
 
     return found
+
+
+# Pedidos de detalle simultaneos. OSV es un servicio publico y gratuito:
+# pocos en paralelo, con reintento si responde 429 o 5xx.
+DETAIL_CONCURRENCY = 8
+
+
+async def get_vulns(vuln_ids, concurrency: int = DETAIL_CONCURRENCY) -> dict[str, dict]:
+    """Detalle de varios advisories reutilizando una conexion. Antes se
+    pedian de a uno y cada pedido abria una conexion TLS nueva: con ~1100
+    CVEs "sin evaluar" en un Proxmox, el escaneo tardaba mas de 10 minutos.
+    Los que fallan tras los reintentos no estan en el resultado."""
+    sem = asyncio.Semaphore(concurrency)
+    out: dict[str, dict] = {}
+
+    async def one(client: httpx.AsyncClient, vid: str) -> None:
+        async with sem:
+            for attempt in range(1, 4):
+                try:
+                    resp = await client.get(f"{OSV_API}/vulns/{vid}")
+                    if resp.status_code == 429 or resp.status_code >= 500:
+                        await asyncio.sleep(attempt)
+                        continue
+                    resp.raise_for_status()
+                    out[vid] = resp.json()
+                    return
+                except httpx.HTTPError:
+                    await asyncio.sleep(attempt)
+            logger.warning("No se pudo obtener el detalle de %s", vid)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        await asyncio.gather(*(one(client, vid) for vid in dict.fromkeys(vuln_ids)))
+    return out
 
 
 async def get_vuln(vuln_id: str) -> dict:
