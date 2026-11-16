@@ -63,8 +63,8 @@ class BlockedIP(Base):
 
 class AuthAttempt(Base):
     """Intentos de login (SSH y web de Proxmox) que manda el agente ya
-    parseados. Ventana corta para detectar fuerza bruta; se purgan a los
-    AUTH_RETENTION_DAYS (ver ids.process_auth_events)."""
+    parseados. Ventana corta para detectar fuerza bruta; se purgan segun
+    RETENTION_REQUESTS_DAYS (ver services/retention.py)."""
 
     __tablename__ = "auth_attempts"
 

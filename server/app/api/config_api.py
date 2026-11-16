@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import require_superadmin
 from app.models.user import User
-from app.services import app_settings, auth, backups, notify
+from app.services import app_settings, auth, backups, notify, retention
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
 logger = logging.getLogger("config")
@@ -106,3 +106,15 @@ async def run_backup(admin: User = Depends(require_superadmin)):
     backups.request_now()
     logger.info("Respaldo pedido por %s", admin.username)
     return {"status": "ok"}
+
+
+@router.get("/retention", dependencies=[Depends(require_superadmin)])
+async def get_retention():
+    return await retention.sizes()
+
+
+@router.post("/retention/run")
+async def run_retention(admin: User = Depends(require_superadmin)):
+    deleted = await retention.purge()
+    logger.info("Purga de retencion pedida por %s", admin.username)
+    return {"deleted": deleted}

@@ -306,7 +306,6 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
             )
 
 
-AUTH_RETENTION_DAYS = 7
 SERVICE_LABEL = {"ssh": "SSH", "pve": "la interfaz web de Proxmox"}
 
 
@@ -360,10 +359,4 @@ async def process_auth_events(session: AsyncSession, host: Host, entries: list[A
             severity="critical",
         )
 
-    # Purga barata (indice por ts): esto es solo una ventana de deteccion.
-    await session.execute(
-        AuthAttempt.__table__.delete().where(
-            AuthAttempt.host_id == host.id, AuthAttempt.ts < now - timedelta(days=AUTH_RETENTION_DAYS)
-        )
-    )
-    await session.commit()
+    # La purga de intentos viejos la hace services/retention.py.

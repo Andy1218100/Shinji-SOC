@@ -74,6 +74,7 @@ function render() {
           </tr>`).join('')}
         </tbody>
       </table>
+      ${g === 'Retencion de datos' ? `<div id="retention-panel" style="margin-top: var(--space-3);"><p style="color: var(--text-muted);">Cargando tamanos...</p></div>` : ''}
       ${g === 'Respaldos' ? `<div id="backups-panel" style="margin-top: var(--space-3);"><p style="color: var(--text-muted);">Cargando respaldos...</p></div>` : ''}
       ${g === 'Notificaciones' ? `
         <div style="display:flex; gap: var(--space-3); align-items:center; margin-top: var(--space-3); flex-wrap: wrap;">
@@ -117,6 +118,7 @@ function render() {
   document.getElementById('geoip-btn')?.addEventListener('click', downloadGeoip);
   document.getElementById('notify-test-btn')?.addEventListener('click', notifyTest);
   loadBackups();
+  loadRetention();
 }
 
 function updateSaveBar() {
@@ -177,6 +179,34 @@ async function generate(key) {
 }
 
 function fmtSize(b) { return b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`; }
+
+async function loadRetention() {
+  const el = document.getElementById('retention-panel');
+  if (!el) return;
+  const res = await fetch('/api/v1/config/retention');
+  if (!res.ok) { el.innerHTML = '<p class="login-error">No se pudo leer el tamano de la base.</p>'; return; }
+  const r = await res.json();
+  const last = r.last_purge && r.last_purge.at
+    ? `Ultima purga: ${new Date(r.last_purge.at).toLocaleString()} (${Object.entries(r.last_purge.deleted).filter(([, n]) => n).map(([k, n]) => `${esc(k)}: ${n}`).join(', ') || 'nada para borrar'}).`
+    : 'La purga corre una vez al dia (la primera, 10 minutos despues de arrancar el servidor).';
+  el.innerHTML = `
+    <div style="display:flex; gap: var(--space-3); align-items:center; flex-wrap: wrap;">
+      <span class="badge neutral">base de datos: ${fmtSize(r.database_bytes)}</span>
+      <button class="sm" type="button" id="retention-run-btn">Aplicar ahora</button>
+      <span style="color: var(--text-muted); font-size: var(--text-xs);">${last}</span>
+    </div>
+    <table class="data" style="margin-top: var(--space-3);"><thead><tr><th>Tabla</th><th>Filas</th><th>Tamano</th></tr></thead>
+      <tbody>${r.tables.map(t => `<tr><td><code>${esc(t.table)}</code>${t.oldest ? ` <span style="color: var(--text-muted); font-size: var(--text-xs);">desde ${new Date(t.oldest).toLocaleDateString()}</span>` : ''}</td><td>${t.rows}</td><td>${fmtSize(t.bytes)}</td></tr>`).join('')}</tbody>
+    </table>`;
+  document.getElementById('retention-run-btn').addEventListener('click', async () => {
+    const res2 = await adminAction('/api/v1/config/retention/run');
+    if (!res2) return;
+    const data = await res2.json();
+    const n = Object.values(data.deleted).reduce((a, b) => a + b, 0);
+    toast(n ? `Purga aplicada: ${n} registros borrados.` : 'Purga aplicada: no habia nada viejo para borrar.', 'success');
+    loadRetention();
+  });
+}
 
 async function loadBackups() {
   const el = document.getElementById('backups-panel');

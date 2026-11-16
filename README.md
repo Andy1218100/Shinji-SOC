@@ -536,6 +536,25 @@ Como funciona:
   puestos dejan la plataforma sin base de datos o sin IA, y no se podrian
   arreglar desde la propia pagina.
 
+## Retencion de datos
+
+Una purga diaria borra lo que crece sin limite. La primera corre 10
+minutos despues de arrancar el servidor. Los plazos se ajustan en
+Configuracion > Retencion de datos, que muestra el tamano de cada tabla y
+tiene el boton "Aplicar ahora":
+
+| Datos | Por defecto |
+|---|---|
+| Metricas de los hosts | 30 dias (los graficos llegan hasta 30) |
+| Peticiones HTTP e intentos de login | 7 dias |
+| Eventos de seguridad cerrados | 365 dias (los abiertos no se borran nunca) |
+| Alertas, comandos y vulnerabilidades resueltas | 90 dias |
+
+Las metricas de mas de 7 dias se comprimen con el columnstore de
+TimescaleDB (`add_columnstore_policy`, que reemplaza a
+`add_compression_policy` desde la 2.18). Se borran por bloques de tiempo
+con `drop_chunks`, que funciona sobre datos comprimidos (probado).
+
 ## Respaldos
 
 El contenedor `backup` respalda la base con `pg_dump -Fc` cada

@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     smtp_to: str = ""
     smtp_starttls: bool = True
 
+    # Retencion de datos (services/retention.py). La interfaz grafica hasta
+    # 30 dias de metricas.
+    retention_metrics_days: int = 30
+    retention_requests_days: int = 7
+    retention_events_days: int = 365
+    retention_resolved_days: int = 90
+
     # Respaldos (los hace el contenedor "backup"; ver scripts/backup_loop.sh)
     backup_interval_hours: int = 24
     backup_keep: int = 14

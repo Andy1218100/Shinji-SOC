@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import ai, alerts, audit, auth, config_api, setup, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
 from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, SessionLocal, engine, ensure_columns, ensure_hypertables
-from app.services import app_settings, first_run
+from app.services import app_settings, first_run, retention
 from app.services.alerting import run_forever as alerting_run_forever
 from app.services.system_report import run_forever as system_report_run_forever
 from app.services.vuln_scan import run_forever as vuln_scan_run_forever
@@ -25,6 +25,7 @@ async def _connect_with_retry(max_attempts: int = 10, delay_seconds: float = 2.0
                 await conn.run_sync(Base.metadata.create_all)
                 await ensure_columns(conn)
                 await ensure_hypertables(conn)
+                await retention.ensure_metrics_compression(conn)
             return
         except Exception as exc:
             if attempt == max_attempts:
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(alerting_run_forever()),
         asyncio.create_task(vuln_scan_run_forever()),
         asyncio.create_task(system_report_run_forever()),
+        asyncio.create_task(retention.run_forever()),
     ]
     yield
     for task in tasks:
