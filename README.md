@@ -627,6 +627,39 @@ claude mcp add --scope user prox-secure-audit -- python "C:/ruta/a/prox secure/t
    Secure con prox-secure-audit". Cada lote consume parte del limite de
    tu suscripcion: conviene ir de a un lote.
 
+## Tests
+
+Corren con `unittest`, de la biblioteca estandar de Python, asi que no
+hay nada que instalar:
+
+```bash
+bash scripts/run_tests.sh
+```
+
+Los del servidor (`server/tests/`) corren dentro de su contenedor, y los
+del agente (`agent/tests/`) con el Python del equipo. Cubren sobre todo
+los bugs que aparecieron contra un host real, para que no vuelvan:
+
+- version corregida de otra release de Debian;
+- lotes de 1000 consultas y paginacion de OSV;
+- paquetes fuente vs binarios, binNMU y epocas;
+- cabeceras del kernel y builds de Proxmox;
+- prompts que prometian parches inexistentes o recomendaban desinstalar
+  paquetes base;
+- datos inventados por la IA;
+- filtrado de datos para la auditoria;
+- validacion y escritura del `.env`;
+- jerarquia de roles;
+- severidad de procesos y prompt del IDS;
+- notificaciones;
+- parseo de logins SSH y Proxmox;
+- inventario multiarch;
+- lista de scripts confiables.
+
+No cubren todavia los flujos que necesitan la base de datos (escaneo
+completo, deteccion de fuerza bruta de punta a punta): esos se probaron a
+mano.
+
 ## Desarrollo local sin Docker (opcional)
 
 ```bash
