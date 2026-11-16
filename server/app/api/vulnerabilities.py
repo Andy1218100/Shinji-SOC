@@ -20,7 +20,21 @@ async def list_vulnerabilities(
     if status:
         stmt = stmt.where(VulnerabilityFinding.status == status)
     result = await db.execute(stmt)
-    return [VulnerabilityFindingOut.model_validate(f) for f in result.scalars().all()]
+    findings = result.scalars().all()
+
+    # package_name es el paquete FUENTE (lo que evalua OSV); el usuario
+    # reconoce mejor los binarios que tiene instalados (openssl -> libssl3t64).
+    binaries: dict[tuple, list[str]] = {}
+    rows = await db.execute(select(InstalledPackage.host_id, InstalledPackage.name, InstalledPackage.source_name))
+    for host_id, name, source_name in rows.all():
+        binaries.setdefault((host_id, source_name or name), []).append(name)
+
+    out = []
+    for f in findings:
+        item = VulnerabilityFindingOut.model_validate(f)
+        item.installed_binaries = sorted(binaries.get((f.host_id, f.package_name), []))
+        out.append(item)
+    return out
 
 
 @router.post("/vulnerabilities/{finding_id}/acknowledge", dependencies=[Depends(require_admin)])

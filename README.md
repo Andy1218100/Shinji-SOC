@@ -26,7 +26,11 @@ origenes mas activos) si configuras GeoIP. **Nada se bloquea solo**: el
 administrador aprueba cada accion desde `/security` y ahi se ejecuta.
 
 **Vulnerabilidades de software**: el agente reporta una vez al dia el
-inventario de paquetes instalados (`dpkg`). El servidor lo cruza contra
+inventario de paquetes instalados (`dpkg`), con el paquete fuente de
+Debian de cada binario. OSV indexa por fuente: consultando por binario,
+`libssl3t64` devuelve 0 avisos y `openssl` 294, y `libc6` (glibc) no
+se revisaba. Los agentes anteriores a este cambio siguen funcionando,
+pero con esa cobertura parcial hasta que se reinstalen. El servidor lo cruza contra
 [OSV.dev](https://osv.dev) (base de datos de CVEs real, gratis, sin
 cuenta) y, por cada paquete afectado, pide a la IA una recomendacion de
 2-3 frases (actualizar, o como mitigar si todavia no hay parche) **a

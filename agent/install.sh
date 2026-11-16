@@ -483,10 +483,18 @@ import subprocess
 logger = logging.getLogger("inventory")
 
 
+# ${source:Package}/${source:Version}: OSV indexa los avisos de Debian por
+# paquete FUENTE. Consultando el binario, libssl3t64 devolvia 0 avisos y su
+# fuente openssl 294 (medido); libc6 (fuente glibc) tampoco se revisaba.
+# La version fuente tampoco es la del binario: bash 5.2.37-2+b10 viene del
+# fuente 5.2.37-2, y bsdutils 1:2.41.5-... de util-linux 2.41.5-... (sin epoca).
+DPKG_FORMAT = "${db:Status-Abbrev}\t${Package}\t${Version}\t${source:Package}\t${source:Version}\n"
+
+
 def collect() -> list[dict]:
     try:
         result = subprocess.run(
-            ["dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\t${Version}\n"],
+            ["dpkg-query", "-W", f"-f={DPKG_FORMAT}"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -498,19 +506,24 @@ def collect() -> list[dict]:
 
     # dict por nombre: con multiarch (amd64 + i386) dpkg lista el mismo
     # paquete una vez por arquitectura.
-    packages: dict[str, str] = {}
+    packages: dict[str, dict] = {}
     for line in result.stdout.splitlines():
         parts = line.split("\t")
-        if len(parts) != 3:
+        if len(parts) != 5:
             continue
-        status, name, version = (p.strip() for p in parts)
+        status, name, version, source_name, source_version = (p.strip() for p in parts)
         # "ii" = instalado. Los "rc" (desinstalados con config residual)
         # no tienen el binario y darian falsos positivos de CVE.
         if status != "ii":
             continue
-        packages[name] = version
+        packages[name] = {
+            "name": name,
+            "version": version,
+            "source_name": source_name or name,
+            "source_version": source_version or version,
+        }
 
-    return [{"name": n, "version": v} for n, v in packages.items()]
+    return list(packages.values())
 
 
 def debian_release() -> str | None:

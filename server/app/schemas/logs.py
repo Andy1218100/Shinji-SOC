@@ -31,6 +31,10 @@ class ProcessEventBatchIn(BaseModel):
 class PackageIn(BaseModel):
     name: str
     version: str
+    # Paquete fuente de Debian (OSV indexa por fuente). Agentes viejos no lo
+    # mandan: se usa el binario como fuente, como antes.
+    source_name: str | None = None
+    source_version: str | None = None
 
 
 class InventoryIn(BaseModel):

@@ -44,9 +44,17 @@ async def ingest_inventory(
     # Con multiarch (amd64 + i386, comun en hosts con servidores de juegos)
     # dpkg lista el mismo paquete una vez por arquitectura; la tabla es
     # unica por (host, nombre). Agentes viejos todavia mandan duplicados.
-    unique = {pkg.name: pkg.version for pkg in payload.packages}
-    for name, version in unique.items():
-        db.add(InstalledPackage(host_id=host.id, name=name, version=version))
+    unique = {pkg.name: pkg for pkg in payload.packages}
+    for pkg in unique.values():
+        db.add(
+            InstalledPackage(
+                host_id=host.id,
+                name=pkg.name,
+                version=pkg.version,
+                source_name=pkg.source_name,
+                source_version=pkg.source_version,
+            )
+        )
     if payload.debian_release:
         host.debian_release = payload.debian_release
     await db.commit()

@@ -20,7 +20,12 @@ async def get_db() -> AsyncSession:
 async def ensure_columns(conn: AsyncConnection) -> None:
     """No hay migraciones y `create_all` no agrega columnas a una tabla que
     ya existe: las columnas nuevas se agregan aca, idempotente."""
-    await conn.execute(text("ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS urgency VARCHAR(32)"))
+    for stmt in (
+        "ALTER TABLE vulnerability_findings ADD COLUMN IF NOT EXISTS urgency VARCHAR(32)",
+        "ALTER TABLE installed_packages ADD COLUMN IF NOT EXISTS source_name VARCHAR(255)",
+        "ALTER TABLE installed_packages ADD COLUMN IF NOT EXISTS source_version VARCHAR(255)",
+    ):
+        await conn.execute(text(stmt))
 
 
 async def ensure_hypertables(conn: AsyncConnection) -> None:

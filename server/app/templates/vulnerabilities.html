@@ -40,6 +40,14 @@ function urgencyLabel(u) { return u ? (URGENCY_LABELS[u] || u) : 'sin dato'; }
 // Igual que vuln_scan.is_third_party_build.
 function isThirdPartyBuild(version) { return /pve|proxmox/i.test(version || ''); }
 let showNoise = false;
+// OSV evalua el paquete fuente de Debian; se listan los binarios instalados
+// solo si no son simplemente el mismo nombre.
+function binariesNote(f) {
+  const bins = f.installed_binaries || [];
+  if (!bins.length || (bins.length === 1 && bins[0] === f.package_name)) return '';
+  const shown = bins.slice(0, 4).map(esc).join(', ') + (bins.length > 4 ? ` y ${bins.length - 4} mas` : '');
+  return `<div style="color: var(--text-muted); font-size: var(--text-xs);">instalado como ${shown}</div>`;
+}
 let hostNames = {};
 // Sobrevive al refresco automatico de 30s, que redibuja la tabla.
 const expandedGroups = new Set();
@@ -180,7 +188,7 @@ async function loadVulnerabilities() {
     return `
       <tr>
         <td>${esc(hostNames[first.host_id] || first.host_id)}</td>
-        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span>${thirdParty}</td>
+        <td>${esc(first.package_name)} <span style="color:var(--text-muted)">${esc(first.package_version)}</span>${thirdParty}${binariesNote(first)}</td>
         <td>
           <div>${items.length} CVE${items.length === 1 ? '' : 's'}${nCrit ? ` · <span class="badge crit">${nCrit} criticas</span>` : ''}</div>
           <div style="color: var(--text-muted); font-size: var(--text-xs);">${breakdown}</div>

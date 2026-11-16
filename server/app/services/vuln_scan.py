@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import re
+import subprocess
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -33,11 +35,52 @@ def is_third_party_build(version: str) -> bool:
     return bool(_THIRD_PARTY_BUILD.search(version))
 
 
+@dataclass
+class SourcePackage:
+    """Paquete fuente de Debian con los binarios instalados que salen de el.
+    OSV indexa los avisos de Debian por fuente: consultar por binario
+    dejaba afuera, p. ej., todo OpenSSL (libssl3t64 -> 0 avisos, openssl ->
+    294) y glibc (libc6)."""
+
+    name: str
+    version: str
+    binaries: list[str] = field(default_factory=list)
+
+
+def _version_lt(a: str, b: str) -> bool:
+    try:
+        return subprocess.run(["dpkg", "--compare-versions", a, "lt", b], timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def group_by_source(packages: list[InstalledPackage]) -> list[SourcePackage]:
+    groups: dict[str, SourcePackage] = {}
+    for p in packages:
+        # Agentes viejos no mandan el fuente: el binario hace de fuente.
+        name = p.source_name or p.name
+        version = p.source_version or p.version
+        group = groups.get(name)
+        if group is None:
+            groups[name] = SourcePackage(name, version, [p.name])
+            continue
+        group.binaries.append(p.name)
+        # Binarios del mismo fuente en versiones distintas (upgrade a medias):
+        # se evalua la mas vieja, que es la que puede seguir vulnerable.
+        if version != group.version and _version_lt(version, group.version):
+            group.version = version
+    return sorted(groups.values(), key=lambda g: g.name)
+
+
+def _upgrade_command(package: SourcePackage) -> str:
+    return f"apt install --only-upgrade {' '.join(sorted(package.binaries)[:8])}"
+
+
 def _relevant(findings: list[VulnerabilityFinding]) -> list[VulnerabilityFinding]:
     return [f for f in findings if f.urgency != osv.UNIMPORTANT]
 
 
-def _fixed_recommendation(package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str | None:
+def _fixed_recommendation(package: SourcePackage, findings: list[VulnerabilityFinding]) -> str | None:
     if is_third_party_build(package.version):
         return (
             f"{package.name} {package.version} es un paquete compilado por Proxmox, no el de Debian. "
@@ -61,7 +104,7 @@ def _fixed_versions(findings: list[VulnerabilityFinding]) -> list[str]:
     return sorted({f.fixed_version for f in findings if f.fixed_version})
 
 
-def _build_prompt(host: Host, package: InstalledPackage, all_findings: list[VulnerabilityFinding]) -> str:
+def _build_prompt(host: Host, package: SourcePackage, all_findings: list[VulnerabilityFinding]) -> str:
     # Los "unimportant" no van al prompt: son ruido para la recomendacion.
     findings = _relevant(all_findings) or all_findings
     ignored = len(all_findings) - len(findings)
@@ -89,7 +132,10 @@ def _build_prompt(host: Host, package: InstalledPackage, all_findings: list[Vuln
             "desinstalar paquetes base del sistema (gestor de paquetes, shell, librerias del sistema)."
         )
     return (
-        f"En el host '{host.name}' el paquete {package.name} {package.version} tiene "
+        f"En el host '{host.name}' el paquete {package.name} {package.version}"
+        + (f" (paquete fuente de Debian; instalado como {', '.join(sorted(package.binaries)[:6])})"
+           if package.binaries != [package.name] else "")
+        + " tiene "
         f"{len(findings)} vulnerabilidades conocidas segun OSV.dev, {len(critical)} de severidad alta o critica"
         + (f" (y otras {ignored} que Debian clasifica como sin importancia, que no hace falta tratar)" if ignored else "")
         + f". Algunas: {example_lines}. {status} No inventes numeros de version, CVEs ni datos que no te di."
@@ -102,12 +148,12 @@ def _grounding_source(prompt: str, findings: list[VulnerabilityFinding]) -> str:
     return " ".join([prompt, *(f.vuln_id for f in findings), *_fixed_versions(findings)])
 
 
-def _fallback_recommendation(package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str:
+def _fallback_recommendation(package: SourcePackage, findings: list[VulnerabilityFinding]) -> str:
     fixed = _fixed_versions(findings)
     with_fix = sum(1 for f in findings if f.fixed_version)
     if fixed:
         return (
-            f"Actualizar {package.name} con apt (apt install --only-upgrade {package.name}): "
+            f"Actualizar {package.name} con apt ({_upgrade_command(package)}): "
             f"{with_fix} de {len(findings)} vulnerabilidades tienen version corregida publicada "
             f"({', '.join(fixed[:3])}). {FALLBACK_NOTE}"
         )
@@ -118,7 +164,7 @@ def _fallback_recommendation(package: InstalledPackage, findings: list[Vulnerabi
     )
 
 
-async def _generate_recommendation(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> str | None:
+async def _generate_recommendation(host: Host, package: SourcePackage, findings: list[VulnerabilityFinding]) -> str | None:
     """Una recomendacion por paquete, no por CVE: un paquete con 100 CVEs
     se arregla con un solo "actualizar", y 1 llamada a un modelo en CPU
     tarda ~20s (por CVE eran horas en un host real)."""
@@ -136,7 +182,7 @@ async def _generate_recommendation(host: Host, package: InstalledPackage, findin
         return None
 
 
-def _needs_new_recommendation(host: Host, package: InstalledPackage, findings: list[VulnerabilityFinding]) -> bool:
+def _needs_new_recommendation(host: Host, package: SourcePackage, findings: list[VulnerabilityFinding]) -> bool:
     recs = {f.ai_recommendation for f in findings}
     # None: la IA no respondio la vez pasada. Mas de un texto: quedaron de
     # cuando era una por CVE.
@@ -160,7 +206,8 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
     if not packages:
         return 0
 
-    pairs = [(p.name, p.version) for p in packages]
+    sources = group_by_source(list(packages))
+    pairs = [(src.name, src.version) for src in sources]
     # OSV.dev versiona el ecosistema Debian por release (Debian:11,
     # Debian:12, ...). Sin el numero de release, las comparaciones de
     # version salen mal (puede marcar como vulnerable algo ya parchado
@@ -188,7 +235,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
     }
     still_present: set[tuple[str, str]] = set()
 
-    for package, vuln_ids in zip(packages, results):
+    for package, vuln_ids in zip(sources, results):
         if not vuln_ids:
             continue
         pkg_findings: list[VulnerabilityFinding] = []
