@@ -1,38 +1,42 @@
 # Manual de instalación de Shinji SOC
 
-Esta guía lleva de cero a una instalación funcionando: el servidor con el panel, HTTPS, la cuenta de administración con MFA y los agentes en los servidores que quieres vigilar.
+Esta guía lleva de cero a una instalación funcionando: el servidor con el panel, la publicación por HTTPS con Cloudflare Tunnel, la cuenta de administración con MFA, los agentes en los servidores que quieres vigilar y la actualización automática.
 
 - [1. Cómo está armado](#1-cómo-está-armado)
 - [2. Requisitos](#2-requisitos)
 - [3. Instalar el servidor](#3-instalar-el-servidor)
 - [4. Primer ingreso: la cuenta super admin](#4-primer-ingreso-la-cuenta-super-admin)
-- [5. HTTPS](#5-https)
+- [5. Publicar el panel con Cloudflare Tunnel](#5-publicar-el-panel-con-cloudflare-tunnel)
 - [6. Agregar servidores (agentes)](#6-agregar-servidores-agentes)
 - [7. Cerrar el acceso sin cifrar](#7-cerrar-el-acceso-sin-cifrar)
-- [8. Configuración opcional](#8-configuración-opcional)
-- [9. Respaldos](#9-respaldos)
-- [10. Actualizar](#10-actualizar)
+- [8. Actualización automática](#8-actualización-automática)
+- [9. Configuración opcional](#9-configuración-opcional)
+- [10. Respaldos](#10-respaldos)
 - [11. Quitar un servidor o desinstalar todo](#11-quitar-un-servidor-o-desinstalar-todo)
 - [12. Solución de problemas](#12-solución-de-problemas)
-- [13. Migrar desde Prox Secure](#13-migrar-desde-prox-secure)
+- [13. Actualizar desde versiones anteriores](#13-actualizar-desde-versiones-anteriores)
 
 ---
 
 ## 1. Cómo está armado
 
 ```
- Servidores vigilados                     Servidor de Shinji SOC (Docker)
- ┌──────────────────┐   HTTPS (443)     ┌──────────────────────────────────┐
- │ agente           │ ───────────────►  │ caddy   HTTPS delante del panel  │
- │ (systemd, Python)│   métricas, logs, │ server  panel + API (FastAPI)    │
- └──────────────────┘   inventario      │ db      PostgreSQL + TimescaleDB │
- ┌──────────────────┐                   │ ollama  IA local                 │
- │ agente           │ ───────────────►  │ backup  respaldos de la base     │
- └──────────────────┘                   └──────────────────────────────────┘
+ Servidores vigilados          Cloudflare                Servidor de Shinji SOC (Docker)
+ ┌──────────────────┐  HTTPS   ┌────────────────┐ túnel  ┌───────────────────────────────────┐
+ │ agente           │ ───────► │ panel.         │ ◄───── │ cloudflared  túnel saliente       │
+ │ (systemd, Python)│          │ tudominio.com  │        │ server       panel + API          │
+ └──────────────────┘          └────────────────┘        │ db           PostgreSQL+TimescaleDB│
+ ┌──────────────────┐                ▲                   │ ollama       IA local             │
+ │ agente           │ ───────────────┘                   │ backup       respaldos            │
+ └──────────────────┘                                    └───────────────────────────────────┘
+        Tu navegador ──── https://panel.tudominio.com ────┘
 ```
 
-- **El servidor** corre en Docker: el panel web, la base de datos, la IA local, HTTPS y los respaldos.
-- **El agente** se instala en cada servidor Linux que quieres vigilar. Manda métricas, logs de acceso, inicios de sesión SSH y el inventario de paquetes, y ejecuta los bloqueos que apruebas en el panel. Siempre es el agente el que se conecta al servidor, nunca al revés.
+- **El servidor** corre en Docker: el panel web, la base de datos, la IA local y los respaldos.
+- **Cloudflare Tunnel** publica el panel en tu dominio con HTTPS y un certificado público. El contenedor `cloudflared` abre una conexión **saliente** hacia Cloudflare: no hace falta abrir puertos en el router ni en el firewall.
+- **El agente** se instala en cada servidor Linux que quieres vigilar. Manda métricas, logs de acceso, inicios de sesión SSH y el inventario de paquetes a `https://panel.tudominio.com`, y ejecuta los bloqueos que apruebas en el panel.
+
+Cloudflare es opcional: el panel también funciona solo en tu red, por `http://IP:8000` (sin cifrar).
 
 ## 2. Requisitos
 
@@ -40,23 +44,29 @@ Esta guía lleva de cero a una instalación funcionando: el servidor con el pane
 
 | | Mínimo | Comentario |
 |---|---|---|
-| Sistema | Linux con Docker Engine y Docker Compose v2, o Windows/macOS con Docker Desktop | Probado en Windows 11 con Docker Desktop. |
+| Sistema | Linux con Docker Engine, Docker Compose v2 y git | Para Proxmox VE: en una VM, no en el host (ver abajo). También funciona con Docker Desktop en Windows o macOS, pero la actualización automática necesita Linux. |
 | Memoria | 6 GB libres para Docker | Medido: Ollama ocupa 3,4 GiB con el modelo `qwen2.5:3b` cargado; el resto de los contenedores, unos 250 MiB. |
 | Disco | 20 GB | Medido: imágenes 11,5 GB (Ollama 8,5 GB), modelo 1,9 GB, base GeoIP 50 MB, más la base de datos y los respaldos. |
-| CPU | 4 núcleos | La IA corre en CPU; no hace falta GPU. Con una GPU la IA responde más rápido. |
-| Red | Puertos 80 y 443 libres | Los agentes se conectan al 443. |
+| CPU | 4 núcleos | La IA corre en CPU; no hace falta GPU. |
+
+**Con Proxmox VE**, instala Shinji SOC dentro de una VM: la documentación de Proxmox indica que correr contenedores dentro de una VM "remains a recommended practice" ([Proxmox VE: Linux Container](https://pve.proxmox.com/wiki/Linux_Container)).
+
+### Para publicar con Cloudflare Tunnel
+
+- Una cuenta de Cloudflare (gratuita).
+- Un dominio agregado a Cloudflare.
 
 ### Servidores que vas a vigilar
 
-- Debian, Ubuntu o derivados (usa `apt` y `systemd`). Probado en Proxmox VE 8 (Debian 13).
-- Acceso como `root` (o `sudo`).
-- Que puedan llegar al servidor de Shinji SOC por el puerto 443 (o el 8000 sin HTTPS).
+- Debian, Ubuntu o derivados, con `systemd`. Probado en Proxmox VE 8 (Debian 13).
+- Acceso como `root`.
+- Salida a internet hacia tu dominio (o acceso por la red al puerto 8000, si no usas Cloudflare).
 
-El instalador agrega solo lo que falte: `python3`, `python3-venv`, `python3-pip`, `sudo`, `fail2ban` y `acl`.
+Detalle en la [guía del agente](AGENTE.md#requisitos).
 
 ## 3. Instalar el servidor
 
-**1. Descarga el código**
+**1. Descarga el código.** Hazlo con `git clone` (no descargando un zip): la actualización automática usa git.
 
 ```bash
 git clone https://github.com/Andy1218100/Shinji-SOC.git
@@ -111,7 +121,7 @@ Son 1,9 GB. Sin el modelo, el panel funciona igual, pero los eventos y las vulne
 docker compose ps
 ```
 
-Los cinco servicios (`db`, `ollama`, `server`, `caddy`, `backup`) tienen que aparecer como `Up`, y `db` como `healthy`.
+`db`, `ollama`, `server` y `backup` tienen que aparecer como `Up`, y `db` como `healthy`.
 
 ## 4. Primer ingreso: la cuenta super admin
 
@@ -123,7 +133,16 @@ docker compose logs server | grep "Codigo de instalacion"
 
 Este código existe para que nadie más pueda crear la cuenta de administración si el panel queda expuesto antes de que lo hagas tú. Después de 10 intentos fallidos se genera uno nuevo.
 
-**2. Abre el panel** en `https://localhost` (o `http://localhost:8000`). Sin usuarios, te lleva solo al asistente de primera instalación.
+**2. Abre el panel.** Sin usuarios, te lleva solo al asistente de primera instalación.
+
+- Desde el mismo servidor, o desde tu red: `http://IP_DEL_SERVIDOR:8000`.
+- Si el servidor es remoto y solo tienes SSH, abre un túnel desde tu equipo y entra a `http://localhost:8000`:
+
+  ```bash
+  ssh -N -L 8000:127.0.0.1:8000 usuario@servidor
+  ```
+
+- O publica primero el panel con Cloudflare Tunnel (sección 5) y entra por tu dominio.
 
 ![Asistente de primera instalación](img/instalacion-setup.png)
 
@@ -151,128 +170,63 @@ docker compose exec server python create_first_admin.py tu_usuario
 
 Las demás cuentas se crean en **Usuarios**: el sistema genera una contraseña temporal que se muestra una sola vez, y esa persona activa su propio MFA en su primer ingreso.
 
-## 5. HTTPS
+## 5. Publicar el panel con Cloudflare Tunnel
 
-El contenedor `caddy` pone HTTPS delante del panel, redirige HTTP a HTTPS y agrega cabeceras de seguridad. Elige uno de estos dos modos en el `.env`.
+El proyecto trae el contenedor `cloudflared` listo; solo le falta el token de tu túnel.
 
-### Opción A: red local (certificado propio)
+**1. Crea el túnel en Cloudflare.** En el panel de Cloudflare: **Networking > Tunnels > Create a tunnel**, ponle un nombre (por ejemplo `shinji-soc`) y elige **Create Tunnel**. Cloudflare muestra un comando de instalación: no hace falta correrlo. Copia de ese comando solo el **token**, la cadena larga que empieza con `eyJ`.
 
-Caddy crea su propia autoridad certificadora (CA). Ejemplo para un servidor en `192.168.1.10`:
-
-```
-PANEL_ADDRESS=localhost, 192.168.1.10
-PANEL_TLS=tls internal
-PANEL_DEFAULT_SNI=192.168.1.10
-```
-
-`PANEL_DEFAULT_SNI` es la IP con la que se conectan los agentes. Quien se conecta por IP no le dice a Caddy qué sitio busca, y sin esta opción Caddy corta la conexión.
-
-Aplica el cambio:
-
-```bash
-docker compose up -d caddy
-```
-
-**Confía en el certificado.** El navegador va a avisar que el sitio no es seguro hasta que instales el certificado raíz de la CA de Caddy. Ese certificado es público; la clave privada queda dentro del volumen de Caddy.
-
-1. Cópialo fuera del contenedor:
-
-   ```bash
-   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy/shinji-soc-ca.crt
-   ```
-
-2. Instálalo como autoridad raíz en cada equipo desde el que abras el panel:
-   - **Windows** (PowerShell como administrador): `certutil -addstore -f Root caddy\shinji-soc-ca.crt`
-   - **Linux (Debian/Ubuntu):** copia el archivo a `/usr/local/share/ca-certificates/shinji-soc-ca.crt` y corre `sudo update-ca-certificates`.
-   - **Firefox** usa su propio almacén: Ajustes > Privacidad y seguridad > Certificados > Ver certificados > Autoridades > Importar.
-
-3. Abre `https://192.168.1.10` (o `https://localhost`).
-
-### Opción B: dominio público (Let's Encrypt)
-
-El dominio tiene que apuntar a este servidor, y los puertos 80 y 443 tienen que llegar desde internet. Caddy obtiene y renueva el certificado solo, y los agentes no necesitan nada extra:
+**2. Activa el túnel en el `.env`:**
 
 ```
-PANEL_ADDRESS=panel.midominio.com
-PANEL_TLS=tls tu@correo.com
-PANEL_DEFAULT_SNI=panel.midominio.com
+COMPOSE_PROFILES=cloudflare
+CLOUDFLARE_TUNNEL_TOKEN=eyJ...el token completo...
 ```
 
 ```bash
-docker compose up -d caddy
+docker compose up -d
 ```
+
+En el panel de Cloudflare, el túnel tiene que pasar a estado conectado; elige **Continue**.
+
+**3. Publica el panel.** En el túnel, pestaña **Routes > Add route > Published application**:
+
+- **Subdomain:** por ejemplo `panel`.
+- **Domain:** tu dominio.
+- **Service URL:** `http://server:8000`
+
+  Es `server`, el nombre del contenedor del panel, y no `localhost`: `cloudflared` corre en su propio contenedor y llega al panel por la red interna de Docker.
+
+Elige **Add route**. El panel queda en `https://panel.tudominio.com`, con un certificado público ([documentación de Cloudflare](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel/)).
+
+> **Si agregas Cloudflare Access** (una pantalla de inicio de sesión de Cloudflare delante del panel), los agentes y el servidor MCP no pueden pasar por ella: deja fuera de Access las rutas `/api/v1/` que usan, o no lo actives. El panel ya pide usuario, contraseña y MFA.
 
 ## 6. Agregar servidores (agentes)
 
-> Esta sección es el resumen. La [guía del agente](AGENTE.md) tiene todo el detalle: instalar desde GitHub, qué datos manda, reinstalar, cambiar la dirección del panel, desinstalar y problemas frecuentes.
+La [guía del agente](AGENTE.md) tiene todo el detalle. En resumen:
 
-**1. Crea el servidor en el panel.** En **Monitoreo**, botón **+ Nuevo host** (rol admin). Indica un nombre, el hostname y, si tiene, su IP pública (sirve para dibujar en el mapa los arcos de los ataques hacia ese servidor).
+**1. Crea el servidor en el panel:** **Monitoreo > + Nuevo host**. El panel muestra una sola vez el comando de instalación con la API key.
 
-Al crearlo, el panel muestra **una sola vez** el comando de instalación, con la dirección del servidor y la API key del nuevo host. Si la pierdes, hay que crear el host de nuevo.
-
-**2. Copia el instalador** al servidor que vas a vigilar. `agent/install.sh` es un solo archivo que trae el agente completo adentro:
+**2. En el servidor que vas a vigilar**, como root, descarga el instalador y córrelo con la dirección pública del panel:
 
 ```bash
-scp agent/install.sh root@servidor:/tmp/install.sh
-```
-
-Con HTTPS de red local (opción A), copia también el certificado de la CA:
-
-```bash
-scp caddy/shinji-soc-ca.crt root@servidor:/tmp/shinji-soc-ca.crt
-```
-
-**3. Instala** en ese servidor, como root. Es el comando que mostró el panel; con HTTPS de red local, agrega la ruta del certificado al final:
-
-```bash
-sudo bash /tmp/install.sh https://192.168.1.10 LA_API_KEY /tmp/shinji-soc-ca.crt
-```
-
-Con un dominio público (opción B) no hace falta el certificado: `sudo bash /tmp/install.sh https://panel.midominio.com LA_API_KEY`.
-
-Tiene que ser `bash`, no `sh`.
-
-**4. Comprueba que funcione:**
-
-```bash
-systemctl status shinji-soc-agent
+curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/install.sh -o /tmp/install.sh
 ```
 
 ```bash
-journalctl -u shinji-soc-agent -f
+sudo bash /tmp/install.sh https://panel.tudominio.com LA_API_KEY
 ```
 
-En el panel, el servidor aparece en **Monitoreo** con sus métricas en menos de un minuto. El inventario de paquetes llega al arrancar y el primer escaneo de vulnerabilidades corre apenas llega.
+Con Cloudflare Tunnel no hace falta ningún certificado extra. Sin Cloudflare, usa `http://IP_DEL_SERVIDOR:8000`.
 
-### Qué deja instalado el agente
-
-| Qué | Dónde |
-|---|---|
-| Código del agente, su configuración y su API key | `/opt/shinji-soc-agent` |
-| Servicio | `shinji-soc-agent` (systemd) |
-| Usuario sin privilegios que lo ejecuta | `shinji-soc` (en el grupo `adm`, para leer logs) |
-| Permisos acotados: bloquear o desbloquear IPs y terminar procesos | `/etc/sudoers.d/shinji-soc-agent` |
-| Jail de fail2ban para los bloqueos aprobados en el panel | `/etc/fail2ban/jail.d/shinjisoc.conf` |
-| Comando para desinstalarlo | `/usr/local/sbin/shinji-soc-uninstall` |
-
-### Logs que el agente no puede leer
-
-El agente busca solo los logs de cada servidor. Si alguno está en una carpeta cerrada, la página del servidor lo muestra en "Logs encontrados pero sin permiso", con un botón **Dar acceso** (pide tu código MFA). Ese botón da permiso de **solo lectura** sobre esa ruta, sin cambiar dueños ni permisos existentes.
-
-### Reinstalar o actualizar un agente
-
-Para reinstalar conservando la misma API key y el mismo certificado (por ejemplo, después de actualizar Shinji SOC):
-
-```bash
-sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh "$SHINJI_SOC_SERVER_URL" "$SHINJI_SOC_API_KEY"'
-```
+**3. Comprueba:** `systemctl status shinji-soc-agent`. En el panel, el servidor aparece en **Monitoreo** con métricas en menos de un minuto.
 
 ## 7. Cerrar el acceso sin cifrar
 
-Cuando el panel y todos los agentes ya usen HTTPS:
+Cuando el panel y todos los agentes ya entren por tu dominio:
 
-1. En el `.env`, pon `SERVER_BIND=127.0.0.1`. El puerto 8000 sin cifrar queda solo para el propio servidor.
-2. Recrea el servidor:
+1. En el `.env`, pon `SERVER_BIND=127.0.0.1`. El puerto 8000 sin cifrar queda solo para el propio servidor; `cloudflared` sigue llegando al panel por la red interna de Docker.
+2. Aplica el cambio:
 
    ```bash
    docker compose up -d server
@@ -282,7 +236,42 @@ Cuando el panel y todos los agentes ya usen HTTPS:
 
 3. En **Configuración > Sesiones y acceso**, activa **Cookies solo por HTTPS**. Desde ese momento solo se puede iniciar sesión por `https://`.
 
-## 8. Configuración opcional
+## 8. Actualización automática
+
+`scripts/update.sh` actualiza Shinji SOC a la última versión publicada en GitHub. Para que lo haga solo, cada hora:
+
+```bash
+sudo bash scripts/install_auto_update.sh
+```
+
+Instala un temporizador de systemd (`shinji-soc-update.timer`). En cada corrida:
+
+1. Consulta GitHub. Si no hay nada nuevo, termina.
+2. Si solo cambió documentación, actualiza los archivos y no reinicia nada.
+3. Si cambió código:
+   - respalda la base en `backups/shinjisoc-AAAAMMDD-HHMMSS-antes-de-actualizar.dump` (conserva los últimos 5);
+   - actualiza, reconstruye los contenedores y comprueba que el panel responda;
+   - si no responde en 3 minutos, vuelve a la versión anterior y no reintenta esa versión hasta que salga otra.
+4. Si cambió el agente, lo avisa en el registro: los agentes se reinstalan a mano ([guía del agente](AGENTE.md#reinstalar-actualizar-o-cambiar-la-dirección-del-panel)).
+
+No toca nada si encuentra archivos del proyecto modificados a mano: el `.env` y `docker-compose.override.yml` no cuentan, porque no son parte del repositorio.
+
+**Comandos útiles:**
+
+| Para | Comando |
+|---|---|
+| Ver qué hizo | `journalctl -u shinji-soc-update` |
+| Ver cuándo corre | `systemctl list-timers shinji-soc-update.timer` |
+| Actualizar ahora | `sudo systemctl start shinji-soc-update.service` |
+| Ver si hay una versión nueva, sin instalarla | `sudo bash scripts/update.sh --check` |
+| Reintentar una versión que falló | `sudo bash scripts/update.sh --retry` |
+| Quitar la actualización automática | `sudo bash scripts/install_auto_update.sh --remove` |
+
+Sin el temporizador, `sudo bash scripts/update.sh` hace lo mismo a mano.
+
+> La actualización automática instala lo que se publique en la rama `main` del repositorio, sin revisión de por medio. Si prefieres revisar cada cambio antes, no instales el temporizador y usa `update.sh --check` y `update.sh` a mano.
+
+## 9. Configuración opcional
 
 Todo esto se hace desde **Configuración** (solo super admin); guardar pide tu código MFA. Los detalles de cada función están en la [referencia técnica](REFERENCIA.md).
 
@@ -290,7 +279,7 @@ Todo esto se hace desde **Configuración** (solo super admin); guardar pide tu c
 - **Notificaciones:** Telegram, ntfy o correo (SMTP), con un botón de prueba. Por defecto solo avisan lo crítico y no incluyen la IP de origen.
 - **IA con Claude:** cambia el motor a Claude y pega una API key de Anthropic. Por defecto todo pasa por la IA local y no sale ningún dato del servidor.
 - **Auditoría de la IA local con Claude:** genera el token de auditoría y registra `tools/mcp_audit/server.py` en Claude Code o Claude Desktop (ver la [guía del servidor MCP](MCP.md)).
-- **Limitar la CPU de la IA:** en una PC de escritorio, Ollama puede dejar todos los núcleos al 100 % durante un escaneo. Crea un `docker-compose.override.yml` (no se versiona; Compose lo carga solo) y corre `docker compose up -d ollama`:
+- **Limitar la CPU de la IA:** en un equipo con pocos núcleos, Ollama puede dejarlos todos al 100 % durante un escaneo. Crea un `docker-compose.override.yml` (no se versiona; Compose lo carga solo) y corre `docker compose up -d ollama`:
 
   ```yaml
   services:
@@ -298,7 +287,7 @@ Todo esto se hace desde **Configuración** (solo super admin); guardar pide tu c
       cpus: "4"
   ```
 
-## 9. Respaldos
+## 10. Respaldos
 
 El contenedor `backup` respalda la base cada 24 horas en la carpeta `backups/` y conserva los últimos 14. En **Configuración > Respaldos** se ve su estado, se ajustan el intervalo y la cantidad, y está el botón **Respaldar ahora**.
 
@@ -310,26 +299,9 @@ Para restaurar uno (pide confirmación y guarda antes una copia del estado actua
 bash scripts/restore_backup.sh backups/shinjisoc-AAAAMMDD-HHMMSS.dump
 ```
 
-## 10. Actualizar
-
-1. Haz un respaldo (**Respaldar ahora**).
-2. Descarga la versión nueva y reconstruye:
-
-   ```bash
-   git pull
-   ```
-
-   ```bash
-   docker compose up -d --build
-   ```
-
-3. Si la versión nueva cambió el agente (`agent/`), reinstálalo en cada servidor (sección 6).
-
-Las imágenes de Ollama, TimescaleDB y Caddy tienen versión fija en `docker-compose.yml`, para que un `docker compose pull` no cambie el motor de la IA o de la base sin aviso. Cómo actualizarlas está en la [referencia técnica](REFERENCIA.md#actualizar-versiones).
-
 ## 11. Quitar un servidor o desinstalar todo
 
-**Quitar el agente de un servidor** (detalle en la [guía del agente](AGENTE.md#desinstalar)). En ese servidor, como root, primero en modo simulación:
+**Quitar el agente de un servidor** (detalle en la [guía del agente](AGENTE.md#desinstalar)). En ese servidor, como root:
 
 ```bash
 shinji-soc-uninstall --dry-run
@@ -339,38 +311,47 @@ shinji-soc-uninstall --dry-run
 shinji-soc-uninstall
 ```
 
-Pide escribir `QUITAR` (con `--yes` no pregunta). Quita todo lo que puso el instalador, incluidos los bloqueos de su jail de fail2ban y los permisos de lectura dados con "Dar acceso". No quita los paquetes del sistema, porque pueden estar en uso por otras cosas.
-
-El servidor y su historial siguen en el panel: se borran desde **Monitoreo >** el servidor **> Eliminar** (pide MFA).
+Después borra el servidor del panel: **Monitoreo >** el servidor **> Eliminar** (pide MFA).
 
 **Desinstalar el servidor de Shinji SOC:**
+
+```bash
+sudo bash scripts/install_auto_update.sh --remove
+```
 
 ```bash
 docker compose down
 ```
 
-Eso detiene y quita los contenedores, pero conserva los datos. Para borrar también la base de datos, el modelo de IA y los certificados (no se puede deshacer):
+Eso detiene y quita los contenedores, pero conserva los datos. Para borrar también la base de datos y el modelo de IA (no se puede deshacer):
 
 ```bash
 docker compose down -v
 ```
 
+En Cloudflare, borra el túnel desde **Networking > Tunnels**.
+
 ## 12. Solución de problemas
 
-**No puedo iniciar sesión: "Cuenta bloqueada temporalmente".** Después de 5 intentos fallidos (contraseña o código), la cuenta se bloquea 5 minutos. Espera y vuelve a intentar.
+**El dominio muestra un error 502 de Cloudflare.** El túnel funciona, pero no llega al panel. Revisa que el **Service URL** de la ruta sea `http://server:8000` y que el panel esté corriendo (`docker compose ps`).
+
+**El túnel no se conecta.** Revisa el log: `docker compose logs cloudflared`. Comprueba que `COMPOSE_PROFILES=cloudflare` esté en el `.env` (sin eso, el contenedor no arranca) y que el token esté completo.
+
+**Los agentes reciben 403 desde Cloudflare.** Si la respuesta es una página de Cloudflare (no del panel), alguna regla de seguridad de Cloudflare está bloqueando a clientes que no son navegadores (Access, reglas del WAF o protección contra bots). Exceptúa las rutas `/api/v1/` para el dominio del panel.
+
+**Los eventos de Seguridad no aparecen en vivo.** La página igual se recarga sola cada 30 segundos.
+
+**No puedo iniciar sesión: "Cuenta bloqueada temporalmente".** Después de 5 intentos fallidos (contraseña o código), la cuenta se bloquea 5 minutos.
 
 **El código del MFA siempre es inválido.** Casi siempre es la hora del teléfono: los códigos dependen del reloj. Activa la hora automática en el teléfono. Si perdiste el teléfono, ver el [manual de MFA](MFA.md#perdí-o-cambié-el-teléfono).
 
-**Activé "Cookies solo por HTTPS" y ya no puedo entrar.** Se está entrando por `http://`. Abre el panel por `https://`, o pon `SESSION_COOKIE_SECURE=false` en el `.env` y corre `docker compose up -d server`.
+**Activé "Cookies solo por HTTPS" y ya no puedo entrar.** Se está entrando por `http://`. Entra por `https://panel.tudominio.com`, o pon `SESSION_COOKIE_SECURE=false` en el `.env` y corre `docker compose up -d server`.
 
-**El agente no se conecta ("certificate verify failed", "internal error").**
-- Con HTTPS de red local, el agente necesita el certificado de la CA (tercer argumento del instalador).
-- Si el agente se conecta por IP, esa IP tiene que estar en `PANEL_ADDRESS` y en `PANEL_DEFAULT_SNI`.
-- Comprueba que el servidor vigilado llegue al panel: `curl -s -o /dev/null -w "%{http_code}\n" --cacert /tmp/shinji-soc-ca.crt https://IP_DEL_PANEL/login` tiene que mostrar `200`.
+**La actualización automática no actualiza.** Mira `journalctl -u shinji-soc-update`. Los motivos más comunes: archivos del proyecto modificados a mano (`git status` los muestra; `git checkout -- archivo` los devuelve a la versión del repositorio) o una versión que falló y quedó marcada (se reintenta con `update.sh --retry`).
 
-**"ports are not available" al levantar un contenedor.** Otro programa usa ese puerto, o Docker Desktop todavía no liberó el del contenedor anterior. Vuelve a correr el comando; si persiste, busca qué usa el puerto (`netstat -ano | findstr :443` en Windows).
+**"ports are not available" al levantar un contenedor.** Otro programa usa ese puerto, o Docker Desktop todavía no liberó el del contenedor anterior. Vuelve a correr el comando.
 
-**Docker Desktop no arranca después de un corte de luz (Windows).** Si el log (`%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log`) dice `initializing Secrets Engine ... engine.sock`, cierra Docker Desktop, renombra la carpeta `%LOCALAPPDATA%\docker-secrets-engine` (por ejemplo a `docker-secrets-engine.bak`) y vuelve a abrirlo; la carpeta se crea de nuevo.
+**Docker Desktop no arranca después de un corte de luz (Windows).** Si el log (`%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log`) dice `initializing Secrets Engine ... engine.sock`, cierra Docker Desktop, renombra la carpeta `%LOCALAPPDATA%\docker-secrets-engine` (por ejemplo a `docker-secrets-engine.bak`) y vuelve a abrirlo.
 
 **La IA no da explicaciones o tarda mucho.** Comprueba que el modelo esté descargado (`docker compose exec ollama ollama list`) y revisa `docker compose logs server`: las respuestas que se rechazan quedan registradas como "Respuesta de IA invalida".
 
@@ -380,30 +361,25 @@ docker compose down -v
 docker compose logs -f server
 ```
 
-## 13. Migrar desde Prox Secure
+## 13. Actualizar desde versiones anteriores
 
-Shinji SOC se llamaba antes Prox Secure. Si tienes una instalación con el nombre anterior:
+**Si tu instalación usaba Caddy** (HTTPS integrado, ya quitado del proyecto): al actualizar, `docker compose up -d --remove-orphans` (o el script de actualización) quita su contenedor. Publica el panel con Cloudflare Tunnel (sección 5) y reinstala los agentes con la dirección nueva, sin el certificado de la CA ([guía del agente](AGENTE.md#reinstalar-actualizar-o-cambiar-la-dirección-del-panel)). Los volúmenes de Caddy quedan en Docker; para borrarlos, busca sus nombres con `docker volume ls | grep caddy` y bórralos con `docker volume rm`.
 
-- **Servidor:** actualiza como en la sección 10. La base, sus usuarios y los respaldos `proxsecure-*.dump` se conservan y se siguen listando y restaurando. Las sesiones abiertas se cierran una vez (cambió el nombre de la cookie). En las apps de autenticación, la cuenta sigue apareciendo como "Prox Secure" y sus códigos siguen sirviendo.
-- **Agentes:** el agente anterior usa otro servicio, usuario y carpeta (`prox-secure-agent`, `/opt/prox-secure-agent`), y el instalador nuevo se niega a instalar mientras siga ahí. En cada servidor:
+**Si tu instalación se llamaba Prox Secure:**
 
-  1. Anota la API key: `sudo grep API_KEY /opt/prox-secure-agent/.env`
-  2. Copia el `uninstall.sh` y el `install.sh` nuevos (y el certificado de la CA, si usas HTTPS de red local):
+- **Servidor:** actualiza como siempre. La base, sus usuarios y los respaldos `proxsecure-*.dump` se conservan y se siguen listando y restaurando. Las sesiones abiertas se cierran una vez (cambió el nombre de la cookie). En las apps de autenticación, la cuenta sigue apareciendo como "Prox Secure" y sus códigos siguen sirviendo.
+- **Agentes:** el agente anterior usa otro servicio, usuario y carpeta (`prox-secure-agent`, `/opt/prox-secure-agent`), y el instalador nuevo se niega a instalar mientras siga ahí. Quítalo con el `uninstall.sh` nuevo, que reconoce los dos nombres, e instala el nuevo con la misma API key:
 
-     ```bash
-     scp agent/uninstall.sh agent/install.sh caddy/shinji-soc-ca.crt root@servidor:/tmp/
-     ```
+  ```bash
+  sudo grep API_KEY /opt/prox-secure-agent/.env
+  ```
 
-  3. Quita el agente anterior. El `uninstall.sh` nuevo reconoce los dos nombres:
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/uninstall.sh -o /tmp/uninstall.sh
+  ```
 
-     ```bash
-     sudo bash /tmp/uninstall.sh --yes
-     ```
+  ```bash
+  sudo bash /tmp/uninstall.sh --yes
+  ```
 
-  4. Instala el nuevo con la misma API key:
-
-     ```bash
-     sudo bash /tmp/install.sh https://IP_DEL_PANEL LA_API_KEY /tmp/shinji-soc-ca.crt
-     ```
-
-  5. Si habías dado acceso a logs con **Dar acceso**, vuelve a darlo desde la página del servidor: el usuario del agente cambió (`shinji-soc`).
+  Después instala el agente nuevo (sección 6) con esa API key, y vuelve a usar **Dar acceso** en los logs que lo tenían: el usuario del agente cambió (`shinji-soc`).

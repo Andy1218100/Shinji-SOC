@@ -15,7 +15,7 @@ El agente es el programa que se instala en cada servidor Linux que quieres vigil
 
 - **Sistema:** Debian, Ubuntu o derivados, con `apt` y `systemd`. Probado en Proxmox VE 8 (Debian 13).
 - **Acceso:** `root` o `sudo`.
-- **Red:** el servidor tiene que poder llegar al panel por el puerto 443 (o el 8000, si el panel no usa HTTPS).
+- **Red:** el servidor tiene que poder llegar al panel: por internet a tu dominio, si lo publicaste con Cloudflare Tunnel, o por la red al puerto 8000.
 - **Del panel:** una cuenta con rol admin, para crear el servidor y obtener su API key.
 
 No hace falta preparar nada más: el instalador agrega lo que falte (`python3`, `python3-venv`, `python3-pip`, `sudo`, `fail2ban` y `acl`).
@@ -50,34 +50,20 @@ Así obtienes la última versión publicada. Si tu panel es de una versión ante
 scp agent/install.sh root@servidor:/tmp/install.sh
 ```
 
-### 3. Si el panel usa HTTPS de red local, copia el certificado
+### 3. Ejecuta el instalador
 
-Con `PANEL_TLS=tls internal` (certificado propio de Caddy), el agente necesita el certificado raíz de la CA para confiar en el panel. Si todavía no lo copiaste fuera del contenedor, en el servidor del panel:
+En el servidor que vas a vigilar, como root. Es el comando que mostró el panel, con la dirección pública del panel:
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy/shinji-soc-ca.crt
+sudo bash /tmp/install.sh https://panel.tudominio.com LA_API_KEY
 ```
 
-Y llévalo al servidor que vas a vigilar:
+Sin Cloudflare Tunnel, usa la dirección del panel en tu red: `http://IP_DEL_SERVIDOR:8000`.
+
+**Panel con un certificado propio** (HTTPS con una CA que no es pública, por ejemplo detrás de tu propio proxy): agrega al final la ruta del certificado raíz de esa CA, copiado antes al servidor. Con Cloudflare Tunnel no hace falta.
 
 ```bash
-scp caddy/shinji-soc-ca.crt root@servidor:/tmp/shinji-soc-ca.crt
-```
-
-Con un dominio público y Let's Encrypt (`PANEL_TLS=tls tu@correo.com`), o sin HTTPS, no hace falta este paso.
-
-### 4. Ejecuta el instalador
-
-En el servidor que vas a vigilar, como root. Es el comando que mostró el panel:
-
-```bash
-sudo bash /tmp/install.sh https://IP_O_DOMINIO_DEL_PANEL LA_API_KEY
-```
-
-Con HTTPS de red local, agrega la ruta del certificado al final:
-
-```bash
-sudo bash /tmp/install.sh https://192.168.1.10 LA_API_KEY /tmp/shinji-soc-ca.crt
+sudo bash /tmp/install.sh https://panel.interno LA_API_KEY /tmp/ca.crt
 ```
 
 Tiene que ser `bash` (no `sh`). El instalador tarda uno o dos minutos: instala las dependencias, crea el usuario del agente y deja el servicio corriendo. Al final indica si fail2ban quedó activo; sin fail2ban, los bloqueos de IP desde el panel no funcionan.
@@ -146,19 +132,21 @@ Lo que fijes ahí gana sobre lo que el agente detecta solo.
 
 El instalador se puede volver a correr sobre una instalación existente: reemplaza el código y la dirección del panel y la API key por las que le pases, y conserva tu `config.yaml`.
 
-**Reinstalar o actualizar con la misma dirección, la misma API key y el mismo certificado.** Descarga el `install.sh` nuevo (paso 2) y corre:
+**Reinstalar o actualizar con la misma dirección y la misma API key.** Descarga el `install.sh` nuevo (paso 2) y corre:
 
 ```bash
-sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh "$SHINJI_SOC_SERVER_URL" "$SHINJI_SOC_API_KEY"'
+sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh "$SHINJI_SOC_SERVER_URL" "$SHINJI_SOC_API_KEY" "${SHINJI_SOC_CA_FILE:-}"'
 ```
 
-**Cambiar la dirección del panel** (por ejemplo, si lo mudaste a otro servidor o pasaste a HTTPS), conservando la API key:
+El tercer argumento conserva el certificado propio, si el agente tenía uno; si no tenía, va vacío y no cambia nada.
+
+**Cambiar la dirección del panel** (por ejemplo, si lo mudaste a otro servidor o lo publicaste con Cloudflare Tunnel), conservando la API key:
 
 ```bash
-sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh https://NUEVA_DIRECCION "$SHINJI_SOC_API_KEY" /tmp/shinji-soc-ca.crt'
+sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh https://panel.tudominio.com "$SHINJI_SOC_API_KEY"'
 ```
 
-El tercer argumento solo hace falta si el panel nuevo usa HTTPS de red local.
+Sin tercer argumento, el agente deja de usar el certificado propio que tuviera y confía en los certificados públicos, que es lo que necesita con Cloudflare Tunnel. Si el panel nuevo usa un certificado propio, agrega la ruta de su CA como tercer argumento.
 
 Si instalaste el panel de cero (base de datos nueva), las API keys anteriores ya no existen: crea el servidor de nuevo en el panel e instala con la API key nueva.
 
@@ -214,17 +202,17 @@ Si solo quieres dejar de vigilarlo por un tiempo, basta con desinstalar el agent
 
 **El instalador dice "Hay un agente instalado con el nombre anterior".** Queda un agente de Prox Secure. Quítalo con `uninstall.sh` (ver [Desinstalar](#desinstalar)) y vuelve a correr el instalador.
 
-**El agente no se conecta: "certificate verify failed".** El panel usa HTTPS de red local y el agente no tiene el certificado de la CA, o tiene el de otra instalación. Reinstala pasando el certificado actual como tercer argumento. Cada instalación del panel genera su propia CA.
+**El agente no se conecta: "certificate verify failed".** El agente tiene configurado un certificado propio (de una instalación anterior, por ejemplo con Caddy) y el panel ahora usa otro. Si el panel está detrás de Cloudflare Tunnel, reinstala con la dirección nueva y sin tercer argumento (ver [Cambiar la dirección del panel](#reinstalar-actualizar-o-cambiar-la-dirección-del-panel)).
 
-**El agente no se conecta: "internal error" o la conexión se corta.** El agente usa una IP que no está en `PANEL_ADDRESS` y `PANEL_DEFAULT_SNI` del `.env` del panel. Agrégala y corre `docker compose up -d caddy` en el panel.
+**El agente recibe 403 desde Cloudflare.** Si la respuesta es una página de Cloudflare y no del panel, alguna regla de seguridad de Cloudflare (Access, WAF o protección contra bots) bloquea a clientes que no son navegadores. Exceptúa las rutas `/api/v1/` del dominio del panel.
 
 **Para probar la conexión desde el servidor vigilado:**
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" --cacert /tmp/shinji-soc-ca.crt https://IP_DEL_PANEL/login
+curl -s -o /dev/null -w "%{http_code}\n" https://panel.tudominio.com/login
 ```
 
-Tiene que mostrar `200`. Sin HTTPS de red local, omite `--cacert`.
+Tiene que mostrar `200`. Sin Cloudflare, prueba con `http://IP_DEL_SERVIDOR:8000/login`.
 
 **En `journalctl` aparecen errores 401.** La API key no existe en el panel: el servidor se borró del panel, o el panel se instaló de cero. Créalo de nuevo e instala con la API key nueva.
 

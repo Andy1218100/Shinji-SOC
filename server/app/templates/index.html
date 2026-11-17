@@ -21,8 +21,8 @@
   </div>
   <p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">
     El comando usa la direccion con la que abriste el panel (<strong id="new-host-origin"></strong>): si ese servidor
-    no llega a ella, cambiala por una que si alcance (IP de la red, VPN). Con HTTPS de red local agrega al final la ruta
-    del certificado de la CA (ver docs/INSTALACION.md). La API key no se vuelve a mostrar; si la pierdes, hay que crear
+    no llega a ella, cambiala por una que si alcance (IP de la red, VPN). Si el panel usa un certificado propio (no publico),
+    agrega al final la ruta de su CA (ver docs/AGENTE.md). La API key no se vuelve a mostrar; si la pierdes, hay que crear
     el host de nuevo.
   </p>
   <button class="sm ghost" id="dismiss-host-cmd-btn" type="button" style="margin-top: var(--space-3);">Entendido, ocultar</button>
@@ -115,7 +115,7 @@
 <script>
 const showFormBtn = document.getElementById('show-new-host-form-btn');
 const form = document.getElementById('create-host-form');
-// La direccion que ve el navegador: detras de Caddy el servidor recibe
+// La direccion que ve el navegador: detras del tunel el servidor recibe
 // http aunque el panel se use por https.
 const serverOrigin = window.location.origin;
 

@@ -12,5 +12,5 @@ server/data/*.mmdb
 docker-compose.override.yml
 .mcp.json
 backups/
-# Certificado raiz de la CA de Caddy (se copia del contenedor; ver docs)
-caddy/*.crt
+# Certificados (por ejemplo, la CA de un panel con certificado propio)
+*.crt

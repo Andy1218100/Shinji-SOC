@@ -19,11 +19,12 @@ Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel t
 - **AI audit with Claude (MCP):** an MCP server lets Claude Code or Claude Desktop review and correct the local AI's text using your Claude plan (no Anthropic API key), with minimized data. See the [MCP guide](docs/MCP.md).
 - **Notifications:** Telegram, ntfy or email.
 - **Accounts with mandatory MFA:** super admin, admin and read-only roles; single-use recovery codes.
-- **Operations:** built-in HTTPS (Caddy), automatic backups, data retention and configuration from the panel itself.
+- **Operations:** HTTPS publishing through Cloudflare Tunnel (no open ports), automatic updates from GitHub, automatic backups, data retention and configuration from the panel itself.
 
 ## Requirements
 
-- **Server:** Docker with Compose v2 (Linux, or Docker Desktop on Windows/macOS), 6 GB of free memory for Docker and 20 GB of disk. No GPU needed.
+- **Server:** Linux with Docker, Compose v2 and git, 6 GB of free memory for Docker and 20 GB of disk. No GPU needed.
+- **To publish it (optional):** a free Cloudflare account with a domain.
 - **Monitored servers:** Debian, Ubuntu or derivatives with `systemd`, and root access.
 
 ## Quick start
@@ -37,7 +38,7 @@ docker compose exec ollama ollama pull qwen2.5:3b
 docker compose logs server | grep "Codigo de instalacion"
 ```
 
-Open `https://localhost` (or `http://localhost:8000`), enter the installation code, create the super admin account and enable MFA with your phone. Then add your servers from **Monitoreo > + Nuevo host**: the panel shows the exact command to run `agent/install.sh` on each server.
+Open `http://SERVER_IP:8000`, enter the installation code, create the super admin account and enable MFA with your phone. Then add your servers from **Monitoreo > + Nuevo host**: the panel shows the exact command to run `agent/install.sh` on each server.
 
 ### Agent: install and uninstall
 
@@ -45,10 +46,10 @@ On each Linux server you want to monitor, as root (the panel shows the API key o
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/install.sh -o /tmp/install.sh
-sudo bash /tmp/install.sh https://YOUR_PANEL THE_API_KEY [/tmp/shinji-soc-ca.crt]
+sudo bash /tmp/install.sh https://panel.yourdomain.com THE_API_KEY
 ```
 
-The third argument is the root certificate of Caddy's internal CA, needed only when the panel uses `PANEL_TLS=tls internal`. To remove the agent and everything it installed (service, user, sudoers, fail2ban jail, read permissions granted from the panel):
+Without Cloudflare Tunnel, use `http://SERVER_IP:8000`. To remove the agent and everything it installed (service, user, sudoers, fail2ban jail, read permissions granted from the panel):
 
 ```bash
 sudo shinji-soc-uninstall --dry-run   # shows what it would do
@@ -57,7 +58,7 @@ sudo shinji-soc-uninstall             # asks you to type QUITAR
 
 Then delete the host from the panel (**Monitoreo** > the host > **Eliminar**). Details in the [agent guide](docs/AGENTE.md) (Spanish).
 
-The full step-by-step guide (HTTPS for a local network or a public domain, agents, backups, troubleshooting) is in the [installation manual](docs/INSTALACION.md), in Spanish.
+To publish it on your domain over HTTPS, create a tunnel in Cloudflare and put its token in `.env` (`COMPOSE_PROFILES=cloudflare` and `CLOUDFLARE_TUNNEL_TOKEN`). To update automatically every hour from GitHub: `sudo bash scripts/install_auto_update.sh`. The full step-by-step guide (agents, backups, troubleshooting) is in the [installation manual](docs/INSTALACION.md), in Spanish.
 
 ## Limitations
 

@@ -75,7 +75,7 @@ Necesitas cuatro datos: la ruta de Python, la ruta de `server.py`, la dirección
 
 ```bash
 claude mcp add --scope user \
-  -e SHINJI_SOC_URL=https://192.168.1.10 \
+  -e SHINJI_SOC_URL=https://panel.tudominio.com \
   -e SHINJI_SOC_AUDIT_TOKEN=EL_TOKEN \
   --transport stdio shinji-soc-audit \
   -- /ruta/a/python3 /ruta/a/server.py
@@ -85,15 +85,12 @@ claude mcp add --scope user \
 - `--transport stdio` va entre el último `-e` y el nombre a propósito: si el nombre va justo después de `-e`, Claude Code lo lee como otra variable y rechaza el comando ([documentación de Claude Code](https://code.claude.com/docs/en/mcp)).
 - Todo lo que va después de `--` es el comando que abre el servidor.
 
-**Si el panel usa HTTPS con el certificado propio de Caddy** (`PANEL_TLS=tls internal`), hay dos opciones:
-
-- instalar el certificado de la CA en tu equipo, como para el navegador (ver el [manual de instalación](INSTALACION.md#opción-a-red-local-certificado-propio)); en Windows, Python usa ese mismo almacén;
-- o agregar `-e SHINJI_SOC_CA_FILE=/ruta/a/shinji-soc-ca.crt` al comando.
+Con el panel publicado por Cloudflare Tunnel, el certificado es público y no hace falta nada más. Si el panel usa un certificado propio (una CA que no es pública), agrega `-e SHINJI_SOC_CA_FILE=/ruta/a/ca.crt` con el certificado raíz de esa CA.
 
 **Ejemplo completo en Windows** (PowerShell, en una sola línea):
 
 ```powershell
-claude mcp add --scope user -e SHINJI_SOC_URL=https://192.168.1.10 -e SHINJI_SOC_AUDIT_TOKEN=EL_TOKEN -e SHINJI_SOC_CA_FILE=C:\shinji-soc-mcp\shinji-soc-ca.crt --transport stdio shinji-soc-audit -- C:\Users\tu_usuario\AppData\Local\Programs\Python\Python312\python.exe C:\shinji-soc-mcp\server.py
+claude mcp add --scope user -e SHINJI_SOC_URL=https://panel.tudominio.com -e SHINJI_SOC_AUDIT_TOKEN=EL_TOKEN --transport stdio shinji-soc-audit -- C:\Users\tu_usuario\AppData\Local\Programs\Python\Python312\python.exe C:\shinji-soc-mcp\server.py
 ```
 
 **Comprueba la conexión:**
@@ -122,22 +119,36 @@ claude mcp list
          "command": "C:\\Users\\tu_usuario\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
          "args": ["C:\\shinji-soc-mcp\\server.py"],
          "env": {
-           "SHINJI_SOC_URL": "https://192.168.1.10",
-           "SHINJI_SOC_AUDIT_TOKEN": "EL_TOKEN",
-           "SHINJI_SOC_CA_FILE": "C:\\shinji-soc-mcp\\shinji-soc-ca.crt"
+           "SHINJI_SOC_URL": "https://panel.tudominio.com",
+           "SHINJI_SOC_AUDIT_TOKEN": "EL_TOKEN"
          }
        }
      }
    }
    ```
 
-   En JSON, las barras invertidas de Windows se escriben dobles. `SHINJI_SOC_CA_FILE` solo hace falta con el certificado propio de Caddy.
+   En JSON, las barras invertidas de Windows se escriben dobles. Con un certificado propio, agrega `"SHINJI_SOC_CA_FILE"` con la ruta del certificado raíz de esa CA.
 
 3. **Cierra Claude Desktop por completo y vuelve a abrirlo**: solo lee la configuración al arrancar.
 
 4. Comprueba que aparezca: botón **+** del cuadro de mensaje > **Connectors > Manage connectors** > `shinji-soc-audit`.
 
 Estos pasos y rutas son los de la [guía oficial de MCP para Claude Desktop](https://modelcontextprotocol.io/docs/develop/connect-local-servers).
+
+## Si el panel está en un servidor remoto
+
+Es el caso normal: el servidor MCP corre en tu equipo y se conecta al panel por la dirección de `SHINJI_SOC_URL`, esté donde esté. Según cómo llegues al servidor:
+
+- **Panel publicado con Cloudflare Tunnel:** usa tu dominio (`https://panel.tudominio.com`). Si pusiste Cloudflare Access delante del panel, deja fuera de Access la ruta `/api/v1/audit/`, porque el servidor MCP no puede iniciar sesión en Access.
+- **Solo tienes SSH al servidor:** abre un túnel desde tu equipo y usa `SHINJI_SOC_URL=http://localhost:8000`. El tráfico va cifrado dentro de SSH, y funciona aunque el puerto 8000 esté cerrado al exterior (`SERVER_BIND=127.0.0.1`). El túnel tiene que estar abierto mientras uses la auditoría:
+
+  ```bash
+  ssh -N -L 8000:127.0.0.1:8000 usuario@servidor
+  ```
+
+- **Claude Code en el propio servidor** (por SSH, dentro de la carpeta del proyecto): el servidor MCP lee el token del `.env` y se conecta a `http://localhost:8000` sin configurar nada más.
+
+Lo que no funciona es registrarlo como servidor MCP remoto, por URL: `server.py` solo funciona como programa local que Claude abre (stdio). Siempre hace falta una copia de `server.py` en el equipo donde corre Claude.
 
 ## 4. Úsalo
 
@@ -176,7 +187,7 @@ Si el servidor MCP lee el token del `.env` local (Claude en el mismo equipo que 
 | `Falta el token` | El servidor MCP no recibió el token. | Revisa `SHINJI_SOC_AUDIT_TOKEN` en el registro. |
 | `respondio 403: Auditoria externa desactivada` | El panel no tiene token de auditoría. | Genéralo en Configuración (paso 1). |
 | `respondio 401: Token de auditoria invalido` | El token no coincide con el del panel. | Copia de nuevo el valor de `AUDIT_API_TOKEN` del `.env` del servidor. |
-| `No se pudo conectar ... CERTIFICATE_VERIFY_FAILED` | Tu equipo no confía en el certificado del panel. | Instala la CA de Caddy en tu equipo o usa `SHINJI_SOC_CA_FILE`. |
+| `No se pudo conectar ... CERTIFICATE_VERIFY_FAILED` | Tu equipo no confía en el certificado del panel. | Con Cloudflare Tunnel no debería pasar: revisa que `SHINJI_SOC_URL` sea tu dominio. Con un certificado propio, usa `SHINJI_SOC_CA_FILE`. |
 | `No se pudo conectar ... Connection refused` o `timed out` | La dirección no es correcta o no se llega al panel. | Usa la misma dirección que en el navegador. Con `SERVER_BIND=127.0.0.1`, `http://IP:8000` solo funciona desde el propio servidor: usa `https://`. |
 | `SHINJI_SOC_CA_FILE apunta a un archivo que no existe` | La ruta del certificado está mal. | Corrígela; en Windows, usa la ruta completa. |
 | `✘ Failed to connect` en `claude mcp list` | Claude no pudo abrir el servidor. | Comprueba la ruta de Python y de `server.py` corriendo el mismo comando en una terminal: tiene que quedarse esperando, sin errores (sal con Ctrl+C). |

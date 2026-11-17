@@ -156,7 +156,7 @@ async def main() -> None:
 
     logger.info("Agente Shinji SOC iniciado, servidor=%s", base_url)
 
-    # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
+    # Panel con HTTPS de una CA propia (certificado no publico):
     # SHINJI_SOC_CA_FILE apunta a su certificado raiz. Sin la variable se
     # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
     verify = os.environ.get("SHINJI_SOC_CA_FILE") or True

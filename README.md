@@ -17,11 +17,12 @@ Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel w
 - **Auditoría con Claude (MCP):** un servidor MCP permite que Claude Code o Claude Desktop revisen y corrijan los textos de la IA local con tu plan de Claude (sin API key de Anthropic) y con datos minimizados. Ver la [guía del servidor MCP](docs/MCP.md).
 - **Notificaciones:** Telegram, ntfy o correo.
 - **Cuentas con MFA obligatorio:** roles super admin, admin y solo lectura; códigos de respaldo de un solo uso.
-- **Operación:** HTTPS integrado (Caddy), respaldos automáticos, retención de datos y configuración desde el propio panel.
+- **Operación:** publicación por HTTPS con Cloudflare Tunnel (sin abrir puertos), actualización automática desde GitHub, respaldos automáticos, retención de datos y configuración desde el propio panel.
 
 ## Requisitos
 
-- **Servidor:** Docker con Compose v2 (Linux, o Docker Desktop en Windows/macOS), 6 GB de memoria libres para Docker y 20 GB de disco. No hace falta GPU.
+- **Servidor:** Linux con Docker, Compose v2 y git, 6 GB de memoria libres para Docker y 20 GB de disco. No hace falta GPU.
+- **Para publicarlo (opcional):** una cuenta gratuita de Cloudflare con un dominio.
 - **Servidores vigilados:** Debian, Ubuntu o derivados con `systemd`, y acceso como root.
 
 ## Inicio rápido
@@ -35,9 +36,9 @@ docker compose exec ollama ollama pull qwen2.5:3b
 docker compose logs server | grep "Codigo de instalacion"
 ```
 
-Abre `https://localhost` (o `http://localhost:8000`), escribe el código de instalación, crea la cuenta super admin y activa el MFA con tu teléfono. Después agrega tus servidores desde **Monitoreo > + Nuevo host**: el panel muestra el comando exacto para correr `agent/install.sh` en cada uno.
+Abre `http://IP_DEL_SERVIDOR:8000`, escribe el código de instalación, crea la cuenta super admin y activa el MFA con tu teléfono. Después agrega tus servidores desde **Monitoreo > + Nuevo host**: el panel muestra el comando exacto para correr `agent/install.sh` en cada uno.
 
-El paso a paso completo, con HTTPS para la red local o un dominio, los agentes y la solución de problemas, está en el [manual de instalación](docs/INSTALACION.md).
+Para publicarlo en tu dominio con HTTPS, crea un túnel en Cloudflare y pon su token en el `.env` (`COMPOSE_PROFILES=cloudflare` y `CLOUDFLARE_TUNNEL_TOKEN`). Para que se actualice solo cada hora desde GitHub: `sudo bash scripts/install_auto_update.sh`. El paso a paso completo, con los agentes y la solución de problemas, está en el [manual de instalación](docs/INSTALACION.md).
 
 ### Agente: instalar y desinstalar
 
@@ -45,10 +46,10 @@ En cada servidor Linux que quieres vigilar, como root (la API key la muestra el 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/install.sh -o /tmp/install.sh
-sudo bash /tmp/install.sh https://TU_PANEL LA_API_KEY [/tmp/shinji-soc-ca.crt]
+sudo bash /tmp/install.sh https://panel.tudominio.com LA_API_KEY
 ```
 
-El tercer argumento es el certificado raíz de la CA de Caddy y solo hace falta si el panel usa `PANEL_TLS=tls internal`. Para quitar el agente y todo lo que instaló (servicio, usuario, sudoers, jail de fail2ban y los permisos de lectura dados desde el panel):
+Sin Cloudflare Tunnel, usa `http://IP_DEL_SERVIDOR:8000`. Para quitar el agente y todo lo que instaló (servicio, usuario, sudoers, jail de fail2ban y los permisos de lectura dados desde el panel):
 
 ```bash
 sudo shinji-soc-uninstall --dry-run   # muestra lo que haría

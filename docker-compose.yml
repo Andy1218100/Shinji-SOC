@@ -55,9 +55,10 @@ services:
       ollama:
         condition: service_started
     ports:
-      # HTTP directo (sin cifrar). Una vez que el panel y los agentes usan
-      # HTTPS (caddy, abajo), SERVER_BIND=127.0.0.1 en el .env lo deja
-      # accesible solo desde este equipo.
+      # HTTP sin cifrar. El acceso desde afuera va por el tunel de
+      # Cloudflare (cloudflared, abajo), que entra por la red interna de
+      # Docker: con SERVER_BIND=127.0.0.1 en el .env este puerto queda solo
+      # para este equipo.
       - "${SERVER_BIND:-0.0.0.0}:8000:8000"
     volumes:
       # El codigo va dentro de la imagen (modo produccion). Para desarrollo,
@@ -69,23 +70,22 @@ services:
       # Lectura del estado de los respaldos y pedido de "Respaldar ahora".
       - ./backups:/backups
 
-  caddy:
-    # HTTPS delante del servidor: ver caddy/Caddyfile y la seccion HTTPS de docs/INSTALACION.md.
-    image: caddy:2.11.9-alpine
+  cloudflared:
+    # Tunel de Cloudflare: publica el panel en tu dominio con HTTPS, sin
+    # abrir puertos. Opcional: se activa con COMPOSE_PROFILES=cloudflare y
+    # CLOUDFLARE_TUNNEL_TOKEN en el .env (ver docs/INSTALACION.md). En el
+    # panel de Cloudflare, el servicio del hostname publico es
+    # http://server:8000.
+    # Version fija, como las demas imagenes; "--no-autoupdate" porque la
+    # actualiza Compose, no cloudflared.
+    image: cloudflare/cloudflared:2026.10.7
+    profiles: ["cloudflare"]
     restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - "80:80"
-      - "443:443"
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - server
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      # Certificados y la CA interna (su clave privada queda en el volumen,
-      # fuera de la carpeta del proyecto).
-      - caddy_data:/data
-      - caddy_config:/config
 
   backup:
     # Misma imagen que la base: su pg_dump es de la misma version.
@@ -105,5 +105,3 @@ services:
 volumes:
   db_data:
   ollama_data:
-  caddy_data:
-  caddy_config:

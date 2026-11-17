@@ -7,9 +7,9 @@ necesita API key de Anthropic. Solo usa la biblioteca estandar de Python
 Configuracion (variables de entorno, o se leen del .env del proyecto):
   SHINJI_SOC_URL           URL del servidor (por defecto http://localhost:8000)
   SHINJI_SOC_AUDIT_TOKEN   el AUDIT_API_TOKEN del servidor
-  SHINJI_SOC_CA_FILE       opcional: certificado raiz de la CA interna de
-                           Caddy, si el panel usa HTTPS con "tls internal"
-                           y ese certificado no esta instalado en el equipo
+  SHINJI_SOC_CA_FILE       opcional: certificado raiz de una CA propia, si
+                           el panel usa HTTPS con un certificado que no es
+                           publico (con Cloudflare Tunnel no hace falta)
 Guia completa: docs/MCP.md
 
 Registrar en Claude Code:
@@ -50,7 +50,7 @@ CA_FILE = os.environ.get("SHINJI_SOC_CA_FILE", "")
 if CA_FILE and not os.path.isfile(CA_FILE):
     sys.exit(f"SHINJI_SOC_CA_FILE apunta a un archivo que no existe: {CA_FILE}")
 # Sin CA_FILE se usan los certificados del sistema (en Windows, el almacen
-# donde queda la CA de Caddy si se instalo con certutil).
+# donde queda una CA propia si se instalo con certutil).
 SSL_CONTEXT = ssl.create_default_context(cafile=CA_FILE) if CA_FILE else None
 
 AUDIT_GUIDE = """Tres tipos de informe (parametro "tipo" de obtener_informe). Para cada item: verdict "ok" si el texto de la IA local (un modelo de 3B) es correcto y util, o "fix" con "corrected_recommendation" (2-3 frases en espanol, solo con datos del item) si no.

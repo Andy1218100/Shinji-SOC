@@ -29,11 +29,10 @@ Cómo funciona cada parte, qué límites tiene y cómo usar la API. Para instala
 |---|---|
 | `server/` | Panel y API (FastAPI, Python 3.12). Recibe métricas, logs, inventario e informes; evalúa reglas de alerta y el motor de detección; cruza el inventario contra OSV.dev; guarda todo en PostgreSQL/TimescaleDB. |
 | `agent/` | Agente Python para cada servidor vigilado: un proceso con varias tareas (métricas, logs, inicios de sesión, procesos, inventario, comandos). `install.sh` lo trae embebido. |
-| `caddy/` | HTTPS delante del panel. |
-| `scripts/` | Respaldos, restauración, descarga de GeoIP y tests. |
+| `scripts/` | Respaldos, restauración, descarga de GeoIP, actualización (`update.sh`, `install_auto_update.sh`) y tests. |
 | `tools/mcp_audit/` | Servidor MCP para auditar la IA local con Claude Code. |
 
-Servicios de `docker-compose.yml`: `db` (TimescaleDB), `ollama` (IA local), `server`, `caddy` y `backup`. Postgres (5432) y Ollama (11434) solo escuchan en `127.0.0.1`.
+Servicios de `docker-compose.yml`: `db` (TimescaleDB), `ollama` (IA local), `server`, `backup` y, opcional, `cloudflared` (Cloudflare Tunnel, se activa con `COMPOSE_PROFILES=cloudflare`). Postgres (5432) y Ollama (11434) solo escuchan en `127.0.0.1`.
 
 ## Detección de intrusos
 
@@ -92,7 +91,7 @@ Muchos hallazgos no son explotables en la práctica: Debian deja como vulnerable
 Umbrales sobre las métricas (CPU, memoria, disco, red). Una regla sin servidor aplica a todos. El servidor las evalúa cada 30 s y, al dispararse una alerta, pide a la IA la causa probable y qué hacer.
 
 ```bash
-curl -b cookies.txt -X POST https://localhost/api/v1/alert-rules \
+curl -b cookies.txt -X POST https://panel.tudominio.com/api/v1/alert-rules \
   -H "Content-Type: application/json" \
   -d '{"name": "CPU alta", "metric_field": "cpu_percent", "operator": ">", "threshold": 90, "severity": "critical"}'
 ```
@@ -137,7 +136,7 @@ Al guardar una corrección, los alias vuelven a ser el nombre y la IP reales.
 
 **Activar:** el paso a paso para Claude Code y Claude Desktop (token, registro, certificado de la CA, uso y problemas frecuentes) está en la [guía del servidor MCP](MCP.md).
 
-Variables que lee `server.py`: `SHINJI_SOC_URL` (por defecto `http://localhost:8000`), `SHINJI_SOC_AUDIT_TOKEN` (si no está, la toma de `AUDIT_API_TOKEN` en el `.env` de la carpeta del proyecto) y `SHINJI_SOC_CA_FILE` (opcional, certificado de la CA interna de Caddy).
+Variables que lee `server.py`: `SHINJI_SOC_URL` (por defecto `http://localhost:8000`), `SHINJI_SOC_AUDIT_TOKEN` (si no está, la toma de `AUDIT_API_TOKEN` en el `.env` de la carpeta del proyecto) y `SHINJI_SOC_CA_FILE` (opcional, certificado raíz de una CA propia; con Cloudflare Tunnel no hace falta).
 
 ## Configuración desde el panel
 
@@ -192,26 +191,28 @@ No hay una API key fija para personas: se inicia sesión con usuario, contraseñ
 
 ```bash
 # 1. Usuario y contraseña: devuelve pending_token (stage "mfa")
-curl -c cookies.txt -X POST https://localhost/api/v1/auth/login \
+curl -c cookies.txt -X POST https://panel.tudominio.com/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "tu_usuario", "password": "tu_contrasena"}'
 
 # 2. Código de la app
-curl -c cookies.txt -b cookies.txt -X POST https://localhost/api/v1/auth/mfa/verify \
+curl -c cookies.txt -b cookies.txt -X POST https://panel.tudominio.com/api/v1/auth/mfa/verify \
   -H "Content-Type: application/json" \
   -d '{"pending_token": "EL_PENDING_TOKEN", "code": "123456"}'
 
 # 3. Desde ahí, con la cookie
-curl -b cookies.txt https://localhost/api/v1/hosts
-curl -b cookies.txt "https://localhost/api/v1/security-events?status=open"
-curl -b cookies.txt https://localhost/api/v1/vulnerabilities
+curl -b cookies.txt https://panel.tudominio.com/api/v1/hosts
+curl -b cookies.txt "https://panel.tudominio.com/api/v1/security-events?status=open"
+curl -b cookies.txt https://panel.tudominio.com/api/v1/vulnerabilities
 ```
 
-Con la CA interna de Caddy, agrega `--cacert caddy/shinji-soc-ca.crt` a cada `curl`. Los agentes se autentican aparte, con la API key de cada servidor en la cabecera `X-API-Key`.
+Sin Cloudflare Tunnel, cambia la dirección por `http://IP_DEL_SERVIDOR:8000`. Los agentes se autentican aparte, con la API key de cada servidor en la cabecera `X-API-Key`.
 
 ## Actualizar versiones
 
-Las imágenes tienen versión fija: `ollama/ollama:0.40.16`, `timescale/timescaledb:2.32.0-pg16` y `caddy:2.11.9-alpine`. Con `latest`, cualquier `docker compose pull` cambiaba el motor de la IA o de la base sin aviso. Actualiza de a una:
+Shinji SOC en sí se actualiza con `scripts/update.sh`, a mano o cada hora con el temporizador de `scripts/install_auto_update.sh` (ver el [manual de instalación](INSTALACION.md#8-actualización-automática)). Las imágenes de terceros se actualizan a mano:
+
+Las imágenes tienen versión fija: `ollama/ollama:0.40.16`, `timescale/timescaledb:2.32.0-pg16` y `cloudflare/cloudflared:2026.10.7`. Con `latest`, cualquier `docker compose pull` cambiaba el motor de la IA o de la base sin aviso. Actualiza de a una:
 
 **Ollama:** cambia el tag en `docker-compose.yml`, corre `docker compose pull ollama && docker compose up -d ollama` y revisa que no aparezcan "Respuesta de IA invalida" en `docker compose logs server`. Si empeora, vuelve al tag anterior.
 

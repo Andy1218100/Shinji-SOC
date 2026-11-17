@@ -10,9 +10,10 @@ set -euo pipefail
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
 INSTALL_DIR="/opt/shinji-soc-agent"
-# Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
-# red local, ver docs/INSTALACION.md). Al reinstalar con ". .env && install.sh ..." se
-# toma el que ya estaba configurado.
+# Opcional: certificado raiz de una CA propia, si el panel usa HTTPS con un
+# certificado que no es publico (con Cloudflare Tunnel no hace falta; ver
+# docs/AGENTE.md). Al reinstalar con ". .env && install.sh ..." se toma el
+# que ya estaba configurado.
 CA_FILE="${3:-${SHINJI_SOC_CA_FILE:-}}"
 if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
   echo "No existe el certificado $CA_FILE" >&2
@@ -1003,7 +1004,7 @@ async def main() -> None:
 
     logger.info("Agente Shinji SOC iniciado, servidor=%s", base_url)
 
-    # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
+    # Panel con HTTPS de una CA propia (certificado no publico):
     # SHINJI_SOC_CA_FILE apunta a su certificado raiz. Sin la variable se
     # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
     verify = os.environ.get("SHINJI_SOC_CA_FILE") or True
