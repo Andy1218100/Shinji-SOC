@@ -56,4 +56,9 @@ else
   setfacl -m u:shinji-soc:r "$RESOLVED"
 fi
 
+# Lista de rutas otorgadas, para que uninstall.sh las quite sin tener que
+# recorrer todo /home y /opt buscando ACLs.
+GRANTED="$(dirname "$(realpath "$0")")/granted_paths"
+grep -qxF "$RESOLVED" "$GRANTED" 2>/dev/null || echo "$RESOLVED" >> "$GRANTED"
+
 echo "acceso de lectura otorgado a shinji-soc sobre $RESOLVED"

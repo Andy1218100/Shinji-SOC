@@ -1315,6 +1315,11 @@ else
   setfacl -m u:shinji-soc:r "$RESOLVED"
 fi
 
+# Lista de rutas otorgadas, para que uninstall.sh las quite sin tener que
+# recorrer todo /home y /opt buscando ACLs.
+GRANTED="$(dirname "$(realpath "$0")")/granted_paths"
+grep -qxF "$RESOLVED" "$GRANTED" 2>/dev/null || echo "$RESOLVED" >> "$GRANTED"
+
 echo "acceso de lectura otorgado a shinji-soc sobre $RESOLVED"
 SHINJISOC_EMBED_12_EOF
 chmod 755 "$INSTALL_DIR/grant_log_access.sh"
@@ -1380,9 +1385,37 @@ have() { command -v "$1" >/dev/null 2>&1; }
 echo "Desinstalacion del agente de Shinji SOC en $(hostname)"
 [ "$DRY_RUN" -eq 1 ] && echo "(simulacion: no se cambia nada)"
 
+# Rutas donde "Dar acceso" (grant_log_access.sh) dio lectura a $user, sin
+# las que quedan dentro de otra de la lista (se quitan juntas, con -R).
+# Primero, la lista que guarda grant_log_access.sh. Los agentes anteriores
+# no la tienen: entonces se busca, pero no archivo por archivo en todo el
+# arbol (con carpetas de cientos de miles de archivos tardaba demasiado),
+# sino en las carpetas (Dar acceso sobre una carpeta deja una ACL en ella)
+# y en los archivos con nombre de log (Dar acceso sobre un archivo suelto:
+# discovery.py solo ofrece logs).
+acl_paths() {
+  local user="$1" dir="$2" roots=() r
+  if [ -f "$dir/granted_paths" ]; then
+    while IFS= read -r r; do [ -e "$r" ] && printf '%s\n' "$r"; done < "$dir/granted_paths"
+    return
+  fi
+  for r in "${ACL_ROOTS[@]}"; do [ -e "$r" ] && roots+=("$r"); done
+  [ "${#roots[@]}" -eq 0 ] && return
+  echo "  Buscando permisos de lectura de $user en ${roots[*]} (con carpetas muy grandes puede tardar unos minutos)..." >&2
+  {
+    find "${roots[@]}" -xdev -type d -print0 2>/dev/null
+    find "${roots[@]}" -xdev -type f \( -name '*.log' -o -name '*.log.*' -o -name '*.logs' \
+      -o -path '*/log/*' -o -path '*/logs/*' \) -print0 2>/dev/null
+  } | xargs -0 -r getfacl -s -p 2>/dev/null | awk -v u="$user" '
+      /^# file: / { file = substr($0, 9); next }
+      $0 ~ "^(default:)?user:" u ":" { if (!(file in seen)) { seen[file] = 1; print file } }' \
+    | grep -v -e "^$dir\$" -e "^$dir/" \
+    | LC_ALL=C sort | awk '{ if (top != "" && index($0, top "/") == 1) next; print; top = $0 }'
+}
+
 # --- que hay instalado de cada nombre
 found_any=0
-declare -A ACL_FILES ACL_DEFAULTS FOUND
+declare -A ACL_PATHS FOUND
 for entry in "${INSTALLS[@]}"; do
   IFS='|' read -r label dir service user sudoers jail f2blog self <<<"$entry"
   found=0
@@ -1393,26 +1426,15 @@ for entry in "${INSTALLS[@]}"; do
   [ -f "/etc/fail2ban/jail.d/$jail.conf" ] && { lines+=("jail $jail de fail2ban"); found=1; }
   id -u "$user" >/dev/null 2>&1 && { lines+=("usuario $user"); found=1; }
 
-  # ACLs que dio "Dar acceso" (grant_log_access.sh). Se buscan antes de
+  # Permisos de lectura (ACL) que dio "Dar acceso". Se buscan antes de
   # borrar el usuario: despues getfacl solo mostraria su numero.
-  files="" defaults=""
+  paths=""
   if have getfacl && id -u "$user" >/dev/null 2>&1; then
-    roots=()
-    for r in "${ACL_ROOTS[@]}"; do [ -e "$r" ] && roots+=("$r"); done
-    if [ "${#roots[@]}" -gt 0 ]; then
-      while IFS=$'\t' read -r kind path; do
-        case "$path" in "$dir"|"$dir"/*) continue ;; esac  # se borra entera
-        if [ "$kind" = "d" ]; then defaults+="$path"$'\n'; else files+="$path"$'\n'; fi
-      done < <(getfacl -R -s -p "${roots[@]}" 2>/dev/null | awk -v u="$user" '
-        /^# file: / { file = substr($0, 9); next }
-        $0 ~ "^user:" u ":"         { print "a\t" file }
-        $0 ~ "^default:user:" u ":" { print "d\t" file }')
-    fi
-    total=$(printf '%s%s' "$files" "$defaults" | grep -c . || true)
-    [ "$total" -gt 0 ] && { lines+=("$total permisos de lectura (ACL) de $user"); found=1; }
+    paths=$(acl_paths "$user" "$dir")
+    total=$(printf '%s' "$paths" | grep -c . || true)
+    [ "$total" -gt 0 ] && { lines+=("permisos de lectura (ACL) de $user en $total rutas"); found=1; }
   fi
-  ACL_FILES[$user]="$files"
-  ACL_DEFAULTS[$user]="$defaults"
+  ACL_PATHS[$user]="$paths"
   FOUND[$user]=$found
 
   if [ "$found" -eq 1 ]; then
@@ -1470,9 +1492,18 @@ for entry in "${INSTALLS[@]}"; do
   fi
 
   echo "3/6 Permisos de lectura (ACL)"
-  [ -z "${ACL_FILES[$user]}${ACL_DEFAULTS[$user]}" ] && echo "  (ninguno)"
-  while IFS= read -r p; do [ -n "$p" ] && run setfacl -x "u:$user" "$p"; done <<<"${ACL_FILES[$user]}"
-  while IFS= read -r p; do [ -n "$p" ] && run setfacl -x "d:u:$user" "$p"; done <<<"${ACL_DEFAULTS[$user]}"
+  [ -z "${ACL_PATHS[$user]}" ] && echo "  (ninguno)"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    if [ -d "$p" ]; then
+      # La carpeta y todo lo de adentro de una vez: la entrada de acceso
+      # (archivos y carpetas) y la entrada por defecto (solo carpetas).
+      run setfacl -R -x "u:$user" "$p"
+      run find "$p" -xdev -type d -exec setfacl -x "d:u:$user" {} +
+    else
+      run setfacl -x "u:$user" "$p"
+    fi
+  done <<<"${ACL_PATHS[$user]}"
 
   echo "4/6 Sudoers"
   if [ -f "$sudoers" ]; then
