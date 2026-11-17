@@ -37,3 +37,17 @@ class User(Base):
     @property
     def is_superadmin(self) -> bool:
         return self.role == "superadmin"
+
+
+class MfaRecoveryCode(Base):
+    """Codigos de respaldo de un solo uso, para entrar sin el telefono. Se
+    guardan con hash (argon2, igual que las contrasenas): el texto se
+    muestra una sola vez, al generarlos."""
+
+    __tablename__ = "mfa_recovery_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(255))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

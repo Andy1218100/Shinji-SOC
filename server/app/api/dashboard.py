@@ -117,6 +117,11 @@ async def settings_page(request: Request, user: User = Depends(require_superadmi
     return templates.TemplateResponse("settings.html", {"request": request, "active_nav": "configuracion", "user": user})
 
 
+@router.get("/account")
+async def account_page(request: Request, user: User = Depends(get_current_user)):
+    return templates.TemplateResponse("account.html", {"request": request, "active_nav": "cuenta", "user": user})
+
+
 @router.get("/users")
 async def users_page(request: Request, user: User = Depends(require_admin)):
     return templates.TemplateResponse(

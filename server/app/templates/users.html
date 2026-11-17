@@ -9,7 +9,7 @@
 
 <section class="panel" id="temp-password-panel" style="display:none; border: 1px solid var(--warn);">
   <h2 style="color: var(--warn);">Contrasena temporal generada</h2>
-  <p>Se muestra una sola vez. Compartila con <strong id="temp-password-user"></strong> por un canal seguro.</p>
+  <p>Se muestra una sola vez. Compartela con <strong id="temp-password-user"></strong> por un canal seguro. En su proximo ingreso elige una contrasena propia y escanea un QR nuevo en su app de autenticacion.</p>
   <div style="display:flex; align-items:center; gap: var(--space-2);">
     <code id="temp-password-value" style="font-size: var(--text-md); background: var(--surface-2); padding: 8px 14px; border-radius: var(--radius-sm); flex: 1;"></code>
     <button class="sm" id="copy-password-btn" type="button">{{ icon("copy", "icon") }} Copiar</button>
@@ -114,7 +114,7 @@ async function loadUsers() {
         <td>
           ${canManage(u) ? `<div class="row-actions">
             ${toggleAction}
-            <button class="sm ghost" data-reset="${esc(u.id)}">Resetear contrasena</button>
+            <button class="sm ghost" data-reset="${esc(u.id)}" title="Contrasena temporal y MFA nuevo: usalo tambien si perdio el telefono">Resetear acceso</button>
             <button class="sm danger" data-delete="${esc(u.id)}" data-username="${esc(u.username)}">Eliminar</button>
           </div>` : `<span style="color: var(--text-muted); font-size: var(--text-xs);">${u.role === "superadmin" ? "cuenta principal" : "solo el super admin"}</span>`}
         </td>
@@ -165,7 +165,7 @@ async function resetPassword(id) {
   if (res) {
     const data = await res.json();
     showTempPassword(data.username, data.temporary_password);
-    toast("Contrasena reseteada.", "success");
+    toast("Acceso reseteado: contrasena temporal y MFA nuevo.", "success");
     loadUsers();
   }
 }

@@ -48,10 +48,10 @@
       </nav>
       <div class="sidebar-footer">
         {% if user %}
-        <div class="sidebar-user">
+        <a class="sidebar-user {{ 'active' if active_nav == 'cuenta' else '' }}" href="/account" title="Mi cuenta: MFA y codigos de respaldo">
           <span class="sidebar-user-name">{{ user.username }}</span>
-          <span class="sidebar-user-role">{{ 'Super admin' if user.is_superadmin else ('Admin' if user.is_admin else 'Solo lectura') }}</span>
-        </div>
+          <span class="sidebar-user-role">{{ 'Super admin' if user.is_superadmin else ('Admin' if user.is_admin else 'Solo lectura') }} · Mi cuenta</span>
+        </a>
         {% endif %}
         <button class="signout" data-action="sign-out" type="button">
           {{ icon("logout") }}

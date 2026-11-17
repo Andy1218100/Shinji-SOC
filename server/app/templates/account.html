@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Mi cuenta · Prox Secure{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Mi cuenta</h1>
+  <p>Verificacion en dos pasos (MFA) de <strong>{{ user.username }}</strong>.</p>
+</div>
+
+<div id="recovery-notice" class="notice" hidden></div>
+
+<div class="account-grid">
+  <section class="panel" aria-labelledby="codes-h">
+    <h2 id="codes-h">Codigos de respaldo</h2>
+    <p style="font-size: var(--text-sm); max-width: 62ch;">
+      Sirven para entrar si no tienes el telefono: en el login, "No tengo el telefono: usar un codigo de respaldo". Cada uno sirve una sola vez. Generar codigos nuevos invalida los anteriores.
+    </p>
+    <div class="account-status" id="codes-status"><span class="badge neutral">Leyendo...</span></div>
+    <div id="codes-area">
+      <form class="account-form" id="codes-form">
+        <label for="codes-mfa">Codigo de tu app de autenticacion</label>
+        <input type="text" id="codes-mfa" inputmode="numeric" maxlength="8" autocomplete="one-time-code" />
+        <p class="login-error" id="codes-error" role="alert"></p>
+        <div><button type="submit" class="primary" id="codes-btn">Generar codigos nuevos</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="phone-h">
+    <h2 id="phone-h">Cambiar de telefono</h2>
+    <p style="font-size: var(--text-sm); max-width: 62ch;">
+      Para pasar el MFA a otro telefono, o si perdiste el anterior. Al confirmar, el telefono anterior deja de dar codigos validos y se generan codigos de respaldo nuevos.
+    </p>
+    <div id="phone-area">
+      <form class="account-form" id="phone-begin">
+        <label for="phone-password">Tu contrasena</label>
+        <input type="password" id="phone-password" autocomplete="current-password" />
+        <p class="login-error" id="phone-begin-error" role="alert"></p>
+        <div><button type="submit" class="primary">Continuar</button></div>
+      </form>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+const USERNAME = {{ user.username | tojson }};
+
+async function postJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+  if (!res) return { ok: false, status: 0, data: { detail: 'No se pudo conectar con el servidor.' } };
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+const detail = (r) => (typeof r.data.detail === 'string' ? r.data.detail : `Error ${r.status}`);
+
+async function loadStatus() {
+  const el = document.getElementById('codes-status');
+  const res = await fetch('/api/v1/account').catch(() => null);
+  if (!res || !res.ok) { el.innerHTML = '<span class="badge crit">No se pudo leer el estado</span>'; return; }
+  const a = await res.json();
+  let badge;
+  if (!a.recovery_codes_total) badge = '<span class="badge warn">Sin codigos de respaldo: genera unos</span>';
+  else if (!a.recovery_codes_left) badge = '<span class="badge crit">Usaste todos: genera codigos nuevos</span>';
+  else if (a.recovery_codes_left <= 3) badge = `<span class="badge warn">Quedan ${a.recovery_codes_left} de ${a.recovery_codes_total}</span>`;
+  else badge = `<span class="badge ok">${a.recovery_codes_left} de ${a.recovery_codes_total} sin usar</span>`;
+  el.innerHTML = `<span class="status ok"><span class="dot ok"></span>MFA activo</span>${badge}`;
+}
+
+// --- codigos de respaldo
+document.getElementById('codes-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('codes-error');
+  const code = document.getElementById('codes-mfa').value.trim();
+  err.textContent = '';
+  if (!code) { err.textContent = 'Ingresa el codigo de tu app.'; return; }
+  const btn = document.getElementById('codes-btn');
+  btn.disabled = true;
+  const r = await postJson('/api/v1/account/recovery-codes', { mfa_code: code });
+  btn.disabled = false;
+  if (!r.ok) { err.textContent = detail(r); document.getElementById('codes-mfa').select(); return; }
+  showCodes(document.getElementById('codes-area'), r.data.recovery_codes);
+});
+
+function showCodes(area, codes) {
+  renderRecoveryCodes(area, codes, {
+    username: USERNAME,
+    doneLabel: 'Listo',
+    onDone: () => { window.location.href = '/account'; },
+  });
+  loadStatus();
+}
+
+// --- cambio de telefono
+let changeToken = null;
+document.getElementById('phone-begin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('phone-begin-error');
+  err.textContent = '';
+  const password = document.getElementById('phone-password').value;
+  if (!password) { err.textContent = 'Ingresa tu contrasena.'; return; }
+  const r = await postJson('/api/v1/account/mfa/begin', { password });
+  if (!r.ok) { err.textContent = detail(r); return; }
+  changeToken = r.data.pending_token;
+  const area = document.getElementById('phone-area');
+  area.innerHTML = `
+    <p style="font-size: var(--text-sm);">Escanea este codigo con la app de autenticacion del telefono nuevo y escribe el codigo que muestra.</p>
+    <div class="qr-box" id="phone-qr"></div>
+    <p style="font-size: var(--text-xs); color: var(--text-muted); overflow-wrap: anywhere;">Si no puedes escanear, cargala a mano con esta clave: <code id="phone-secret"></code></p>
+    <form class="account-form" id="phone-finish">
+      <label for="phone-code">Codigo del telefono nuevo</label>
+      <input type="text" id="phone-code" inputmode="numeric" maxlength="8" autocomplete="one-time-code" />
+      <p class="login-error" id="phone-finish-error" role="alert"></p>
+      <div class="row-actions">
+        <button type="submit" class="primary">Confirmar telefono nuevo</button>
+        <button type="button" class="ghost" id="phone-cancel">Cancelar</button>
+      </div>
+    </form>`;
+  document.getElementById('phone-secret').textContent = r.data.mfa_secret;
+  new QRCode(document.getElementById('phone-qr'), { text: r.data.otpauth_uri, width: 180, height: 180 });
+  document.getElementById('phone-cancel').addEventListener('click', () => { window.location.href = '/account'; });
+  document.getElementById('phone-finish').addEventListener('submit', finishPhone);
+  document.getElementById('phone-code').focus();
+});
+
+async function finishPhone(e) {
+  e.preventDefault();
+  const err = document.getElementById('phone-finish-error');
+  err.textContent = '';
+  const code = document.getElementById('phone-code').value.trim();
+  if (!code) { err.textContent = 'Ingresa el codigo del telefono nuevo.'; return; }
+  const r = await postJson('/api/v1/account/mfa/finish', { pending_token: changeToken, mfa_code: code });
+  if (!r.ok) { err.textContent = detail(r); document.getElementById('phone-code').select(); return; }
+  toast('Telefono nuevo configurado. El anterior ya no sirve.', 'success');
+  document.getElementById('codes-area').innerHTML = '';
+  showCodes(document.getElementById('phone-area'), r.data.recovery_codes);
+}
+
+// --- aviso al entrar con un codigo de respaldo
+const params = new URLSearchParams(window.location.search);
+if (params.has('recuperacion')) {
+  const left = Number(params.get('recuperacion'));
+  const notice = document.getElementById('recovery-notice');
+  notice.hidden = false;
+  notice.textContent = `Entraste con un codigo de respaldo. Te quedan ${Number.isFinite(left) ? left : '?'}. `
+    + 'Si perdiste el telefono, configura uno nuevo en "Cambiar de telefono": el anterior deja de servir y recibes codigos nuevos.';
+  history.replaceState(null, '', '/account');
+}
+
+loadStatus();
+</script>
+{% endblock %}

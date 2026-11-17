@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.models.user import User
 from app.schemas.auth import LoginRequest, LoginResponse, MeResponse, MfaVerifyRequest, SetupRequest
-from app.services import auth
+from app.services import auth, recovery
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -97,10 +97,11 @@ async def complete_setup(payload: SetupRequest, response: Response, db: AsyncSes
     user.password_hash = auth.hash_password(payload.new_password)
     user.must_set_password = False
     user.mfa_enabled = True
+    codes = await recovery.replace_codes(db, user)
     await _register_success(db, user)
 
     _set_session_cookie(response, user)
-    return {"status": "ok"}
+    return {"status": "ok", "recovery_codes": codes}
 
 
 @router.post("/mfa/verify")
@@ -116,12 +117,20 @@ async def verify_mfa(payload: MfaVerifyRequest, response: Response, db: AsyncSes
     if _is_locked(user):
         raise HTTPException(status_code=423, detail="Cuenta bloqueada temporalmente por varios intentos fallidos")
 
+    used_recovery = False
     if not auth.verify_totp(user.mfa_secret, payload.code):
-        await _register_failure(db, user)
-        raise HTTPException(status_code=401, detail="Codigo MFA invalido")
+        # Un codigo de respaldo cuenta igual que un codigo de la app para el
+        # bloqueo por intentos fallidos.
+        if not await recovery.use_code(db, user, payload.code):
+            await _register_failure(db, user)
+            raise HTTPException(status_code=401, detail="Codigo invalido")
+        used_recovery = True
 
-    await _register_success(db, user)
+    await _register_success(db, user)  # tambien guarda el codigo de respaldo como usado
     _set_session_cookie(response, user)
+    if used_recovery:
+        left, _ = await recovery.counts(db, user.id)
+        return {"status": "ok", "used_recovery_code": True, "recovery_codes_left": left}
     return {"status": "ok"}
 
 

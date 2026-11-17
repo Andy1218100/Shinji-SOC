@@ -48,6 +48,51 @@ async function adminAction(url, method = "POST") {
   return res;
 }
 
+// Muestra los codigos de respaldo recien generados (una sola vez) con
+// copiar/descargar, y no deja seguir hasta confirmar que se guardaron.
+function renderRecoveryCodes(container, codes, { username = "", doneLabel = "Continuar", onDone } = {}) {
+  const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  container.innerHTML = `
+    <div class="recovery-codes">
+      <p><strong>Guarda estos codigos de respaldo.</strong> Cada uno sirve una sola vez para entrar si no tienes el telefono. No se vuelven a mostrar.</p>
+      <ol class="recovery-list">${codes.map((c) => `<li><code>${escHtml(c)}</code></li>`).join("")}</ol>
+      <div class="row-actions">
+        <button type="button" class="sm" data-rc="copy">Copiar</button>
+        <button type="button" class="sm" data-rc="download">Descargar .txt</button>
+      </div>
+      <label class="check-row"><input type="checkbox" data-rc="saved" /> Los guarde en un lugar seguro, fuera de este equipo (gestor de contrasenas o papel).</label>
+      <button type="button" class="primary" data-rc="done" disabled>${escHtml(doneLabel)}</button>
+    </div>`;
+  const text = [
+    `Prox Secure: codigos de respaldo${username ? " de " + username : ""}`,
+    `Generados: ${new Date().toLocaleString()}`,
+    "Cada codigo sirve una sola vez. Generar codigos nuevos invalida estos.",
+    "",
+    ...codes,
+    "",
+  ].join(String.fromCharCode(10));
+  container.querySelector('[data-rc="copy"]').addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Codigos copiados.", "success");
+    } catch (e) {
+      toast("El navegador no dejo copiar (pasa sin HTTPS): usa Descargar.", "error");
+    }
+  });
+  container.querySelector('[data-rc="download"]').addEventListener("click", () => {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "prox-secure-codigos-de-respaldo.txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  const done = container.querySelector('[data-rc="done"]');
+  container.querySelector('[data-rc="saved"]').addEventListener("change", (e) => { done.disabled = !e.target.checked; });
+  done.addEventListener("click", () => onDone && onDone());
+  container.querySelector('[data-rc="copy"]').focus();
+}
+
 async function refreshNavBadgeFor(navName, url) {
   const badge = document.querySelector(`.nav-badge[data-nav="${navName}"]`);
   if (!badge) return;

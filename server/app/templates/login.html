@@ -31,24 +31,27 @@
       </form>
 
       <form id="step-mfa" style="display:none;">
-        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
+        <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);" id="mfa-hint">
           Ingresa el codigo de 6 digitos de tu app de autenticacion.
         </p>
-        <label for="mfa-code">Codigo</label>
+        <label for="mfa-code" id="mfa-label">Codigo</label>
         <input type="text" id="mfa-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
         <p class="login-error" id="mfa-error"></p>
         <button type="submit" class="primary">
           <span>Verificar</span>
         </button>
+        <button type="button" class="link-button" id="mfa-toggle">No tengo el telefono: usar un codigo de respaldo</button>
       </form>
+
+      <div id="step-codes" style="display:none;"></div>
 
       <form id="step-setup" style="display:none;">
         <p style="font-size: var(--text-sm); color: var(--text-secondary); margin: 0 0 var(--space-3);">
-          Primer ingreso: elegi una contrasena nueva y enrola tu app de autenticacion (Google Authenticator, Authy, etc.) escaneando el codigo.
+          Primer ingreso: elige una contrasena nueva y agrega la cuenta a tu app de autenticacion (Google Authenticator, Authy, etc.) escaneando el codigo.
         </p>
         <div id="qr-code" style="display:flex; justify-content:center; margin-bottom: var(--space-3); background:#fff; border-radius: var(--radius-md); padding: var(--space-3);"></div>
-        <p style="font-size: var(--text-xs); color: var(--text-muted); word-break: break-all; margin: 0 0 var(--space-3);">
-          Si no podes escanear, cargalo a mano: <code id="mfa-secret-text"></code>
+        <p style="font-size: var(--text-xs); color: var(--text-muted); overflow-wrap: anywhere; margin: 0 0 var(--space-3);">
+          Si no puedes escanear, cargala a mano con esta clave: <code id="mfa-secret-text"></code>
         </p>
         <label for="new-password">Contrasena nueva (minimo 10 caracteres)</label>
         <input type="password" id="new-password" autocomplete="new-password" />
@@ -63,14 +66,36 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+  <script src="/static/js/app.js"></script>
   <script>
     let pendingToken = null;
+    let useRecovery = false;
 
     function showStep(id) {
-      ["step-credentials", "step-mfa", "step-setup"].forEach((s) => {
+      ["step-credentials", "step-mfa", "step-setup", "step-codes"].forEach((s) => {
         document.getElementById(s).style.display = s === id ? "block" : "none";
       });
     }
+
+    // Alterna entre el codigo de la app y un codigo de respaldo.
+    document.getElementById("mfa-toggle").addEventListener("click", () => {
+      useRecovery = !useRecovery;
+      const input = document.getElementById("mfa-code");
+      input.value = "";
+      input.inputMode = useRecovery ? "text" : "numeric";
+      input.maxLength = useRecovery ? 11 : 6;
+      input.placeholder = useRecovery ? "XXXXX-XXXXX" : "";
+      input.autocomplete = useRecovery ? "off" : "one-time-code";
+      document.getElementById("mfa-label").textContent = useRecovery ? "Codigo de respaldo" : "Codigo";
+      document.getElementById("mfa-hint").textContent = useRecovery
+        ? "Ingresa uno de los codigos de respaldo que guardaste al activar el MFA. Cada uno sirve una sola vez."
+        : "Ingresa el codigo de 6 digitos de tu app de autenticacion.";
+      document.getElementById("mfa-toggle").textContent = useRecovery
+        ? "Usar el codigo de la app"
+        : "No tengo el telefono: usar un codigo de respaldo";
+      document.getElementById("mfa-error").textContent = "";
+      input.focus();
+    });
 
     function redirectAfterLogin() {
       const params = new URLSearchParams(window.location.search);
@@ -153,6 +178,11 @@
           errorEl.textContent = data.detail || "Codigo invalido.";
           return;
         }
+        if (data.used_recovery_code) {
+          // Entro sin el telefono: Mi cuenta explica como configurar uno nuevo.
+          window.location.href = `/account?recuperacion=${encodeURIComponent(data.recovery_codes_left)}`;
+          return;
+        }
         redirectAfterLogin();
       } catch (e) {
         errorEl.textContent = "No se pudo contactar al servidor.";
@@ -191,7 +221,12 @@
           errorEl.textContent = data.detail || "No se pudo completar la configuracion.";
           return;
         }
-        redirectAfterLogin();
+        showStep("step-codes");
+        renderRecoveryCodes(document.getElementById("step-codes"), data.recovery_codes || [], {
+          username: document.getElementById("username").value.trim(),
+          doneLabel: "Entrar al panel",
+          onDone: redirectAfterLogin,
+        });
       } catch (e) {
         errorEl.textContent = "No se pudo contactar al servidor.";
       } finally {

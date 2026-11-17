@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import ai, alerts, audit, auth, config_api, setup, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
+from app.api import account, ai, alerts, audit, auth, config_api, setup, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
 from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, SessionLocal, engine, ensure_columns, ensure_hypertables
 from app.services import app_settings, first_run, retention
@@ -88,3 +88,4 @@ app.include_router(users.router)
 app.include_router(audit.router)
 app.include_router(config_api.router)
 app.include_router(setup.router)
+app.include_router(account.router)

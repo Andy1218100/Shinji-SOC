@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import MIN_PASSWORD_LENGTH, _set_session_cookie
 from app.core.db import get_db
 from app.models.user import User
-from app.services import auth, first_run
+from app.services import auth, first_run, recovery
 
 router = APIRouter(prefix="/api/v1/setup", tags=["setup"])
 
@@ -72,8 +72,10 @@ async def setup_finish(payload: SetupFinish, response: Response, db: AsyncSessio
         must_set_password=False,
     )
     db.add(user)
+    await db.flush()
+    codes = await recovery.replace_codes(db, user)
     await db.commit()
     await db.refresh(user)
     first_run.consume_code()
     _set_session_cookie(response, user)
-    return {"status": "ok"}
+    return {"status": "ok", "recovery_codes": codes}

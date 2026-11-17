@@ -6,7 +6,7 @@ from app.api.deps import require_admin
 from app.core.db import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserCreated, UserOut
-from app.services import auth
+from app.services import auth, recovery
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -72,7 +72,7 @@ async def deactivate_user(
     admin: User = Depends(require_admin),
 ):
     if user_id == str(admin.id):
-        raise HTTPException(status_code=400, detail="No podes desactivar tu propia cuenta")
+        raise HTTPException(status_code=400, detail="No puedes desactivar tu propia cuenta")
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
@@ -104,7 +104,7 @@ async def delete_user(
     admin: User = Depends(require_admin),
 ):
     if user_id == str(admin.id):
-        raise HTTPException(status_code=400, detail="No podes eliminar tu propia cuenta")
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propia cuenta")
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No encontrado")
@@ -119,6 +119,7 @@ async def delete_user(
             detail="Esta cuenta creo otras cuentas y no se puede eliminar; desactivala en su lugar",
         )
 
+    await recovery.delete_codes(db, user)
     await db.delete(user)
     await db.commit()
     return {"status": "ok"}
@@ -138,6 +139,12 @@ async def reset_password(
     temp_password = auth.generate_temp_password()
     user.password_hash = auth.hash_password(temp_password)
     user.must_set_password = True
+    # Clave MFA nueva: el reset se usa sobre todo cuando se perdio el
+    # telefono, y con la clave anterior ese telefono seguiria dando codigos
+    # validos. En el proximo login se escanea un QR nuevo.
+    user.mfa_secret = auth.generate_mfa_secret()
+    user.mfa_enabled = False
+    await recovery.delete_codes(db, user)
     user.failed_attempts = 0
     user.locked_until = None
     await db.commit()

@@ -4,7 +4,7 @@ from app.models.alert import Alert, AlertRule
 from app.models.security import BlockedIP, Command, IngestedRequest, SecurityEvent
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
 from app.models.system_report import SystemReport
-from app.models.user import User
+from app.models.user import MfaRecoveryCode, User
 
 __all__ = [
     "Host",
@@ -19,4 +19,5 @@ __all__ = [
     "VulnerabilityFinding",
     "SystemReport",
     "User",
+    "MfaRecoveryCode",
 ]

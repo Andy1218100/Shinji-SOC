@@ -4,6 +4,7 @@ Ningun secreto se guarda en texto plano; las contrasenas temporales que
 genera el sistema se muestran una sola vez al admin que crea la cuenta.
 """
 
+import re
 import secrets
 
 import pyotp
@@ -17,6 +18,12 @@ _hasher = PasswordHasher()
 
 SESSION_COOKIE = "proxsecure_session"
 PENDING_COOKIE_MAX_AGE = 600  # 10 minutos para completar login/MFA/setup
+MFA_CHANGE_MAX_AGE = 900  # 15 minutos para escanear el QR del telefono nuevo
+
+# Codigos de respaldo: 10 caracteres de un alfabeto sin 0/O ni 1/I/L (50 bits).
+RECOVERY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+RECOVERY_CODE_COUNT = 10
+RECOVERY_CODE_LENGTH = 10
 
 
 def hash_password(password: str) -> str:
@@ -50,6 +57,25 @@ def verify_totp(secret: str, code: str) -> bool:
     return pyotp.TOTP(secret).verify(code, valid_window=1)
 
 
+def generate_recovery_codes(count: int = RECOVERY_CODE_COUNT) -> list[str]:
+    """Codigos legibles con guion al medio: XXXXX-XXXXX."""
+    half = RECOVERY_CODE_LENGTH // 2
+    codes = []
+    for _ in range(count):
+        raw = "".join(secrets.choice(RECOVERY_ALPHABET) for _ in range(RECOVERY_CODE_LENGTH))
+        codes.append(f"{raw[:half]}-{raw[half:]}")
+    return codes
+
+
+def normalize_recovery_code(code: str) -> str | None:
+    """Sin espacios ni guiones y en mayusculas; None si no tiene la forma de
+    un codigo de respaldo (asi un codigo TOTP no se compara contra ellos)."""
+    raw = re.sub(r"[\s-]", "", code or "").upper()
+    if len(raw) != RECOVERY_CODE_LENGTH or any(c not in RECOVERY_ALPHABET for c in raw):
+        return None
+    return raw
+
+
 def _serializer(salt: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.session_secret_key, salt=salt)
 
@@ -78,3 +104,18 @@ def read_pending_token(token: str, expected_stage: str) -> str | None:
     if data.get("stage") != expected_stage:
         return None
     return data.get("user_id")
+
+
+def issue_mfa_change_token(user_id: str, secret: str) -> str:
+    """Clave MFA nueva pendiente de confirmar (cambio de telefono). Va en un
+    token firmado, no en la base: hasta confirmar el codigo sigue valiendo la
+    clave anterior."""
+    return _serializer("mfa-change").dumps({"u": user_id, "s": secret})
+
+
+def read_mfa_change_token(token: str, user_id: str) -> str | None:
+    try:
+        data = _serializer("mfa-change").loads(token, max_age=MFA_CHANGE_MAX_AGE)
+    except (BadSignature, SignatureExpired):
+        return None
+    return data.get("s") if data.get("u") == user_id else None
