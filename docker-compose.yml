@@ -2,7 +2,7 @@ services:
   db:
     # Version fija: el binario de TimescaleDB tiene que coincidir con la
     # extension instalada en la base (ALTER EXTENSION al actualizar) y con
-    # la de los respaldos. Ver README, "Actualizar versiones".
+    # la de los respaldos. Ver docs/REFERENCIA.md, "Actualizar versiones".
     image: timescale/timescaledb:2.32.0-pg16
     restart: unless-stopped
     environment:
@@ -23,7 +23,7 @@ services:
   ollama:
     # Version fija: con "latest" cualquier "docker compose pull" cambiaba el
     # motor de la IA sin aviso (la basura de la IA aparecio con la 0.40.16).
-    # Ver README, "Actualizar versiones".
+    # Ver docs/REFERENCIA.md, "Actualizar versiones".
     image: ollama/ollama:0.40.16
     restart: unless-stopped
     environment:
@@ -70,7 +70,7 @@ services:
       - ./backups:/backups
 
   caddy:
-    # HTTPS delante del servidor: ver caddy/Caddyfile y la seccion HTTPS del README.
+    # HTTPS delante del servidor: ver caddy/Caddyfile y la seccion HTTPS de docs/INSTALACION.md.
     image: caddy:2.11.9-alpine
     restart: unless-stopped
     env_file:

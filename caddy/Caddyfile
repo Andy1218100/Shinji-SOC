@@ -4,7 +4,7 @@
 #   - Red local (por defecto): PANEL_ADDRESS="localhost, 192.168.1.10" y
 #     PANEL_TLS="tls internal". Caddy firma con su propia CA; hay que
 #     instalar su certificado raiz en los navegadores y en los agentes
-#     (ver README, seccion HTTPS).
+#     (ver docs/INSTALACION.md, seccion HTTPS).
 #   - Dominio publico: PANEL_ADDRESS="panel.midominio.com" y
 #     PANEL_TLS="tls tu@correo.com". Certificado de Let's Encrypt
 #     automatico; el dominio tiene que apuntar a este servidor y los

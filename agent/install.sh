@@ -11,7 +11,7 @@ SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
 INSTALL_DIR="/opt/shinji-soc-agent"
 # Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
-# red local, ver README). Al reinstalar con ". .env && install.sh ..." se
+# red local, ver docs/INSTALACION.md). Al reinstalar con ". .env && install.sh ..." se
 # toma el que ya estaba configurado.
 CA_FILE="${3:-${SHINJI_SOC_CA_FILE:-}}"
 if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then

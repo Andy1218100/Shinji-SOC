@@ -11,19 +11,19 @@
 <section class="panel" id="new-host-panel" style="display:none; border: 1px solid var(--warn);">
   <h2 style="color: var(--warn);">Host creado: instala el agente</h2>
   <p>
-    El servidor y el agente se "comunican" por HTTP: el agente de <strong id="new-host-name"></strong>
-    manda metricas/logs/comandos a esta direccion usando la API key de abajo (header <code>X-API-Key</code>).
-    Corre esto en el servidor Linux real que quieres monitorear (no aqui):
+    El agente de <strong id="new-host-name"></strong> manda metricas, logs e inventario a esta direccion
+    con la API key de abajo. Copia <code>agent/install.sh</code> al servidor Linux que quieres monitorear
+    (<code>scp agent/install.sh root@servidor:/tmp/</code>) y corre ahi, como root:
   </p>
   <div style="display:flex; align-items:center; gap: var(--space-2); flex-wrap: wrap;">
     <code id="new-host-cmd" style="font-size: var(--text-sm); background: var(--surface-2); padding: 8px 14px; border-radius: var(--radius-sm); flex: 1; min-width: 280px; word-break: break-all;"></code>
     <button class="sm" id="copy-host-cmd-btn" type="button">{{ icon("copy", "icon") }} Copiar</button>
   </div>
   <p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">
-    Necesitas copiar antes la carpeta <code>agent/</code> a ese servidor (<code>scp -r agent usuario@servidor:/tmp/shinji-soc-agent</code>).
-    El comando de arriba asume que ese servidor puede llegar a <strong>{{ request.url.scheme }}://{{ request.url.netloc }}</strong> --
-    si esta en otra red, cambia esa parte por una direccion que si pueda alcanzar (IP publica, VPN, etc.).
-    La API key no se vuelve a mostrar; si la perdes, hay que reinstalar con una nueva.
+    El comando usa la direccion con la que abriste el panel (<strong id="new-host-origin"></strong>): si ese servidor
+    no llega a ella, cambiala por una que si alcance (IP de la red, VPN). Con HTTPS de red local agrega al final la ruta
+    del certificado de la CA (ver docs/INSTALACION.md). La API key no se vuelve a mostrar; si la pierdes, hay que crear
+    el host de nuevo.
   </p>
   <button class="sm ghost" id="dismiss-host-cmd-btn" type="button" style="margin-top: var(--space-3);">Entendido, ocultar</button>
 </section>
@@ -115,7 +115,9 @@
 <script>
 const showFormBtn = document.getElementById('show-new-host-form-btn');
 const form = document.getElementById('create-host-form');
-const serverOrigin = `{{ request.url.scheme }}://{{ request.url.netloc }}`;
+// La direccion que ve el navegador: detras de Caddy el servidor recibe
+// http aunque el panel se use por https.
+const serverOrigin = window.location.origin;
 
 showFormBtn.addEventListener('click', () => { form.style.display = 'flex'; showFormBtn.style.display = 'none'; });
 document.getElementById('cancel-new-host-btn').addEventListener('click', () => { form.style.display = 'none'; showFormBtn.style.display = 'inline-flex'; });
@@ -123,7 +125,8 @@ document.getElementById('cancel-new-host-btn').addEventListener('click', () => {
 function showNewHostPanel(name, apiKey) {
   document.getElementById('new-host-name').textContent = name;
   document.getElementById('new-host-cmd').textContent =
-    `sudo ./install.sh ${serverOrigin} ${apiKey}`;
+    `sudo bash /tmp/install.sh ${serverOrigin} ${apiKey}`;
+  document.getElementById('new-host-origin').textContent = serverOrigin;
   document.getElementById('new-host-panel').style.display = 'block';
   document.getElementById('new-host-panel').scrollIntoView({ behavior: 'smooth' });
 }
