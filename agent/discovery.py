@@ -48,7 +48,7 @@ WEB_SERVER_LOG_CANDIDATES = {
 # si mismo -- cada comando aprobado se ejecuta via "sudo ...", que es
 # justo el patron que busca process_watch.py) y root (root ejecutando lo
 # que sea no es una anomalia, es el superusuario).
-WATCH_EXCLUDED_USERS = {"root", "prox-secure"}
+WATCH_EXCLUDED_USERS = {"root", "shinji-soc"}
 NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", ""}
 SYSTEM_UID_MAX = 999  # convencion Debian/Ubuntu: UIDs de cuentas de sistema son < 1000
 

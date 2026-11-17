@@ -18,7 +18,7 @@ _n=0
 emit_file() {
   local src="$1" dest="$2" mode="${3:-}"
   _n=$((_n + 1))
-  local delim="PROXSECURE_EMBED_${_n}_EOF"
+  local delim="SHINJISOC_EMBED_${_n}_EOF"
   {
     echo "mkdir -p \"\$(dirname \"$dest\")\""
     echo "cat > \"$dest\" <<'${delim}'"
@@ -35,7 +35,7 @@ emit_file() {
 
 cat > "$OUT" <<'HEAD_EOF'
 #!/usr/bin/env bash
-# Instala el agente de Prox Secure en un servidor Linux (Debian/Ubuntu).
+# Instala el agente de Shinji SOC en un servidor Linux (Debian/Ubuntu).
 # Autocontenido: alcanza con este archivo, no hace falta nada mas de este
 # repo en el servidor. Generado por _build_install.sh -- no editar a mano
 # los archivos embebidos de aca abajo, editar el fuente real en agent/ y
@@ -45,11 +45,11 @@ set -euo pipefail
 
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
-INSTALL_DIR="/opt/prox-secure-agent"
+INSTALL_DIR="/opt/shinji-soc-agent"
 # Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
 # red local, ver README). Al reinstalar con ". .env && install.sh ..." se
 # toma el que ya estaba configurado.
-CA_FILE="${3:-${PROX_SECURE_CA_FILE:-}}"
+CA_FILE="${3:-${SHINJI_SOC_CA_FILE:-}}"
 if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
   echo "No existe el certificado $CA_FILE" >&2
   exit 1
@@ -57,6 +57,17 @@ fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root (sudo)." >&2
+  exit 1
+fi
+
+# El proyecto se llamaba "Prox Secure": un agente de entonces usa otro
+# usuario, servicio y carpeta, y quedarian los dos corriendo. Se quita
+# primero con uninstall.sh (que reconoce los dos nombres).
+if [ -d /opt/prox-secure-agent ] || [ -f /etc/systemd/system/prox-secure-agent.service ]; then
+  echo "Hay un agente instalado con el nombre anterior (Prox Secure, en /opt/prox-secure-agent)." >&2
+  echo "Quitalo primero y despues vuelve a correr este instalador:" >&2
+  echo "  sudo grep API_KEY /opt/prox-secure-agent/.env    # anota la API key para reusarla" >&2
+  echo "  sudo bash uninstall.sh --yes                     # el uninstall.sh de esta version" >&2
   exit 1
 fi
 
@@ -75,11 +86,11 @@ echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, a
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
 
-id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
+id -u shinji-soc &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin shinji-soc
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
 # /var/log/apache2, etc. Sin esto, los logs que el agente autodetecta
 # (ver discovery.py) existen pero no los puede leer.
-usermod -aG adm prox-secure
+usermod -aG adm shinji-soc
 
 mkdir -p "$INSTALL_DIR"
 
@@ -98,9 +109,9 @@ emit_file "process_watch.py"     '$INSTALL_DIR/process_watch.py'
 emit_file "requirements.txt"     '$INSTALL_DIR/requirements.txt'
 emit_file "kill_process.sh"      '$INSTALL_DIR/kill_process.sh' 755
 emit_file "grant_log_access.sh"  '$INSTALL_DIR/grant_log_access.sh' 755
-# Desinstalador como comando del sistema (prox-secure-uninstall): queda fuera
+# Desinstalador como comando del sistema (shinji-soc-uninstall): queda fuera
 # de $INSTALL_DIR porque ese directorio es lo que borra.
-emit_file "uninstall.sh"         '/usr/local/sbin/prox-secure-uninstall' 755
+emit_file "uninstall.sh"         '/usr/local/sbin/shinji-soc-uninstall' 755
 
 cat >> "$OUT" <<'MID_EOF'
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
@@ -117,38 +128,38 @@ python3 -m venv "$INSTALL_DIR/.venv"
 "$INSTALL_DIR/.venv/bin/pip" install --no-cache-dir -r "$INSTALL_DIR/requirements.txt"
 
 cat > "$INSTALL_DIR/.env" <<EOF
-PROX_SECURE_SERVER_URL=${SERVER_URL}
-PROX_SECURE_API_KEY=${API_KEY}
+SHINJI_SOC_SERVER_URL=${SERVER_URL}
+SHINJI_SOC_API_KEY=${API_KEY}
 EOF
 if [ -n "$CA_FILE" ]; then
   if [ "$(realpath "$CA_FILE")" != "$INSTALL_DIR/ca.crt" ]; then
     cp "$CA_FILE" "$INSTALL_DIR/ca.crt"
   fi
-  echo "PROX_SECURE_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
+  echo "SHINJI_SOC_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
   echo "Usando la CA de $CA_FILE para verificar el HTTPS del servidor."
 fi
 chmod 600 "$INSTALL_DIR/.env"
 
-chown -R prox-secure:prox-secure "$INSTALL_DIR"
+chown -R shinji-soc:shinji-soc "$INSTALL_DIR"
 
 # fail2ban: jail dedicado para bloqueos manuales via panel
 MID2_EOF
 
-emit_file "fail2ban/filter.d/proxsecure.conf" '/etc/fail2ban/filter.d/proxsecure.conf'
-emit_file "fail2ban/jail.d/proxsecure.conf"   '/etc/fail2ban/jail.d/proxsecure.conf'
+emit_file "fail2ban/filter.d/shinjisoc.conf" '/etc/fail2ban/filter.d/shinjisoc.conf'
+emit_file "fail2ban/jail.d/shinjisoc.conf"   '/etc/fail2ban/jail.d/shinjisoc.conf'
 
 cat >> "$OUT" <<'MID3_EOF'
 # El jail no lee logs (solo recibe bloqueos manuales), pero fail2ban exige
 # que el logpath exista. Antes era /var/log/auth.log, que no existe en
 # Proxmox VE 8+ (sin rsyslog): el jail no arrancaba y bloquear no hacia nada.
-touch /var/log/prox-secure-fail2ban.log
+touch /var/log/shinji-soc-fail2ban.log
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 # Sin esto un error de configuracion pasaba en silencio: fail2ban arranca,
 # falla al cargar los jails y se cierra, y "Bloquear IP" no hace nada.
 sleep 2
-if systemctl is-active --quiet fail2ban && fail2ban-client status proxsecure >/dev/null 2>&1; then
-  echo "fail2ban activo con el jail proxsecure (bloqueos desde el panel)."
+if systemctl is-active --quiet fail2ban && fail2ban-client status shinjisoc >/dev/null 2>&1; then
+  echo "fail2ban activo con el jail shinjisoc (bloqueos desde el panel)."
 else
   echo "AVISO: fail2ban no quedo activo, los bloqueos de IP desde el panel no van a funcionar." >&2
   echo "       Revisa: fail2ban-client -t; tail -n 30 /var/log/fail2ban.log" >&2
@@ -157,23 +168,23 @@ fi
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
 MID3_EOF
 
-emit_file "sudoers/prox-secure-agent" '/etc/sudoers.d/prox-secure-agent' 440
+emit_file "sudoers/shinji-soc-agent" '/etc/sudoers.d/shinji-soc-agent' 440
 
 cat >> "$OUT" <<'MID4_EOF'
-visudo -c -f /etc/sudoers.d/prox-secure-agent
+visudo -c -f /etc/sudoers.d/shinji-soc-agent
 MID4_EOF
 
-emit_file "prox-secure-agent.service" '/etc/systemd/system/prox-secure-agent.service'
+emit_file "shinji-soc-agent.service" '/etc/systemd/system/shinji-soc-agent.service'
 
 cat >> "$OUT" <<'TAIL_EOF'
 systemctl daemon-reload
-systemctl enable prox-secure-agent
+systemctl enable shinji-soc-agent
 # restart (no start): si install.sh se re-corre sobre un agente que ya
 # estaba activo, "start" no hace nada y el proceso se queda sin el grupo
 # "adm" recien agregado hasta el proximo reinicio manual.
-systemctl restart prox-secure-agent
+systemctl restart shinji-soc-agent
 
-echo "Agente instalado y corriendo. Ver logs: journalctl -u prox-secure-agent -f"
+echo "Agente instalado y corriendo. Ver logs: journalctl -u shinji-soc-agent -f"
 TAIL_EOF
 
 chmod +x "$OUT"

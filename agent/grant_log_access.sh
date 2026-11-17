@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Da a prox-secure permiso de LECTURA (via ACL -- nunca toca duenos ni
+# Da a shinji-soc permiso de LECTURA (via ACL -- nunca toca duenos ni
 # permisos existentes, nunca agrega escritura) sobre una carpeta o
 # archivo que discovery.py encontro pero no pudo abrir/leer. Pensado
-# para correr via sudo (ver sudoers/prox-secure-agent).
+# para correr via sudo (ver sudoers/shinji-soc-agent).
 #
 # Solo opera dentro de las mismas rutas donde discovery.py busca logs
 # (ver LOG_SCAN_ROOTS en discovery.py) -- y nunca sobre /root: el riesgo
@@ -47,13 +47,13 @@ if [[ -d "$RESOLVED" ]]; then
   # rX en vez de rx: la X mayuscula solo da ejecucion (necesaria para
   # poder "entrar") a lo que ya es un directorio, nunca a un archivo
   # suelto -- no vuelve ejecutable nada que no lo fuera.
-  setfacl -R -m u:prox-secure:rX "$RESOLVED"
+  setfacl -R -m u:shinji-soc:rX "$RESOLVED"
   # ACL por defecto: para que los logs que esa app cree DESPUES de hoy
   # (rotacion diaria, nuevas instancias, etc.) hereden el mismo permiso
   # sin tener que repetir esto cada vez.
-  setfacl -R -d -m u:prox-secure:rX "$RESOLVED"
+  setfacl -R -d -m u:shinji-soc:rX "$RESOLVED"
 else
-  setfacl -m u:prox-secure:r "$RESOLVED"
+  setfacl -m u:shinji-soc:r "$RESOLVED"
 fi
 
-echo "acceso de lectura otorgado a prox-secure sobre $RESOLVED"
+echo "acceso de lectura otorgado a shinji-soc sobre $RESOLVED"

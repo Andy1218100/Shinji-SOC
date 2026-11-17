@@ -1,4 +1,4 @@
-"""Agente Prox Secure: un solo proceso con varias tareas concurrentes.
+"""Agente Shinji SOC: un solo proceso con varias tareas concurrentes.
 
 - discovery: lo primero que hace el agente al arrancar es describir el
   sistema (SO, hardware, servicios, puertos) y mandarlo al servidor, que
@@ -17,7 +17,7 @@
 - commands_loop: ejecuta bloqueos/kills aprobados desde el panel.
 
 Corre sin privilegios salvo las acciones puntuales de commands.py, que
-usan sudo acotado (ver sudoers/prox-secure-agent).
+usan sudo acotado (ver sudoers/shinji-soc-agent).
 """
 
 import asyncio
@@ -154,12 +154,12 @@ async def main() -> None:
     base_url = cfg["server_url"].rstrip("/")
     headers = {"X-API-Key": cfg["api_key"]}
 
-    logger.info("Agente Prox Secure iniciado, servidor=%s", base_url)
+    logger.info("Agente Shinji SOC iniciado, servidor=%s", base_url)
 
     # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
-    # PROX_SECURE_CA_FILE apunta a su certificado raiz. Sin la variable se
+    # SHINJI_SOC_CA_FILE apunta a su certificado raiz. Sin la variable se
     # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
-    verify = os.environ.get("PROX_SECURE_CA_FILE") or True
+    verify = os.environ.get("SHINJI_SOC_CA_FILE") or True
     async with httpx.AsyncClient(timeout=30, verify=verify) as client:
         # Lo primero que hace el agente, antes de arrancar a monitorear:
         # describir el sistema. El resto de los loops usa ese resultado

@@ -70,7 +70,7 @@ async def _telegram(client: httpx.AsyncClient, title: str, body: str) -> None:
 
 async def _ntfy(client: httpx.AsyncClient, title: str, body: str, severity: str) -> None:
     # Las cabeceras HTTP van en ASCII: "·" -> "-" y se quitan los acentos
-    # (sin esto llegaba "Prox Secure ? prueba").
+    # (sin esto llegaba "Shinji SOC ? prueba").
     ascii_title = unicodedata.normalize("NFKD", title.replace("·", "-")).encode("ascii", "ignore").decode()
     headers = {
         "Title": ascii_title,

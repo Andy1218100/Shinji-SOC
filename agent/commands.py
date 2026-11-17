@@ -1,7 +1,7 @@
 """Ejecuta comandos aprobados por el administrador desde el panel
 (bloquear IP via fail2ban, terminar un proceso, dar acceso de lectura a
 un log bloqueado) usando los permisos acotados definidos en
-sudoers/prox-secure-agent. El agente en si corre sin privilegios; solo
+sudoers/shinji-soc-agent. El agente en si corre sin privilegios; solo
 esas acciones puntuales usan sudo.
 """
 

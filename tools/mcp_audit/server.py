@@ -1,15 +1,15 @@
-"""Servidor MCP (stdio) para que Claude audite a la IA local de Prox Secure.
+"""Servidor MCP (stdio) para que Claude audite a la IA local de Shinji SOC.
 
 Corre en la PC del admin, la que tiene Claude Code con su suscripcion; no
 necesita API key de Anthropic. Solo usa la biblioteca estandar de Python
 (el protocolo MCP por stdio es JSON-RPC 2.0, un mensaje por linea).
 
 Configuracion (variables de entorno, o se leen del .env del proyecto):
-  PROX_SECURE_URL           URL del servidor (por defecto http://localhost:8000)
-  PROX_SECURE_AUDIT_TOKEN   el AUDIT_API_TOKEN del servidor
+  SHINJI_SOC_URL           URL del servidor (por defecto http://localhost:8000)
+  SHINJI_SOC_AUDIT_TOKEN   el AUDIT_API_TOKEN del servidor
 
 Registrar en Claude Code:
-  claude mcp add --scope user prox-secure-audit -- python "<ruta>/tools/mcp_audit/server.py"
+  claude mcp add --scope user shinji-soc-audit -- python "<ruta>/tools/mcp_audit/server.py"
 """
 
 import json
@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-SERVER_NAME = "prox-secure-audit"
+SERVER_NAME = "shinji-soc-audit"
 SERVER_VERSION = "1.0.0"
 DEFAULT_PROTOCOL = "2025-06-18"
 
@@ -39,8 +39,8 @@ def _load_env_file() -> dict:
 
 
 _ENV = _load_env_file()
-BASE_URL = os.environ.get("PROX_SECURE_URL", "http://localhost:8000").rstrip("/")
-TOKEN = os.environ.get("PROX_SECURE_AUDIT_TOKEN") or _ENV.get("AUDIT_API_TOKEN", "")
+BASE_URL = os.environ.get("SHINJI_SOC_URL", "http://localhost:8000").rstrip("/")
+TOKEN = os.environ.get("SHINJI_SOC_AUDIT_TOKEN") or _ENV.get("AUDIT_API_TOKEN", "")
 
 AUDIT_GUIDE = """Tres tipos de informe (parametro "tipo" de obtener_informe). Para cada item: verdict "ok" si el texto de la IA local (un modelo de 3B) es correcto y util, o "fix" con "corrected_recommendation" (2-3 frases en espanol, solo con datos del item) si no.
 
@@ -65,7 +65,7 @@ TOOLS = [
     {
         "name": "obtener_informe",
         "description": (
-            "Devuelve un lote compacto de textos de la IA local de Prox Secure que todavia no fueron "
+            "Devuelve un lote compacto de textos de la IA local de Shinji SOC que todavia no fueron "
             "auditados (recomendaciones de vulnerabilidades, resumenes de eventos de seguridad o informes "
             "de hosts), con los datos necesarios para juzgarlos y las reglas activas.\n\n" + AUDIT_GUIDE
         ),
@@ -82,7 +82,7 @@ TOOLS = [
     {
         "name": "enviar_auditoria",
         "description": (
-            "Guarda en Prox Secure el resultado de la auditoria: veredicto por item (las correcciones "
+            "Guarda en Shinji SOC el resultado de la auditoria: veredicto por item (las correcciones "
             "reemplazan el texto de la IA local) y reglas nuevas que la IA local usara en sus proximas "
             "respuestas. El servidor rechaza correcciones que citen versiones o CVEs que no estan en los datos."
         ),
@@ -123,7 +123,7 @@ TOOLS = [
 
 def _http(method: str, path: str, body: dict | None = None) -> dict:
     if not TOKEN:
-        raise RuntimeError("Falta el token: define AUDIT_API_TOKEN en el .env del proyecto o PROX_SECURE_AUDIT_TOKEN.")
+        raise RuntimeError("Falta el token: define AUDIT_API_TOKEN en el .env del proyecto o SHINJI_SOC_AUDIT_TOKEN.")
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         BASE_URL + path, data=data, method=method,
@@ -134,7 +134,7 @@ def _http(method: str, path: str, body: dict | None = None) -> dict:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:500]
-        raise RuntimeError(f"Prox Secure respondio {exc.code}: {detail}") from None
+        raise RuntimeError(f"Shinji SOC respondio {exc.code}: {detail}") from None
     except urllib.error.URLError as exc:
         raise RuntimeError(f"No se pudo conectar a {BASE_URL}: {exc.reason}") from None
 

@@ -28,5 +28,5 @@ discovery_interval_seconds: 86400
 command_poll_interval_seconds: 10
 
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
-# agent/fail2ban/jail.d/proxsecure.conf).
-fail2ban_jail: proxsecure
+# agent/fail2ban/jail.d/shinjisoc.conf).
+fail2ban_jail: shinjisoc

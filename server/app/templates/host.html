@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ host.name if host else "Host" }} · Prox Secure{% endblock %}
+{% block title %}{{ host.name if host else "Host" }} · Shinji SOC{% endblock %}
 {% block content %}
 {% if host %}
 <div class="page-header">
@@ -376,7 +376,7 @@ async function loadSystemReport() {
     ${tagGroupWarnIfAny(
       "Logs encontrados pero sin permiso de lectura",
       r.unreadable_log_paths || [],
-      "El usuario del agente (prox-secure) no puede abrir estos archivos. Dale permiso de lectura (ej. agregandolo al grupo dueno) si queres que se vigilen."
+      "El usuario del agente (shinji-soc) no puede abrir estos archivos. Dale permiso de lectura (ej. agregandolo al grupo dueno) si queres que se vigilen."
     )}
     ${tagGroupWarnIfAny(
       "Carpetas que no se pudieron ni abrir para buscar logs adentro",

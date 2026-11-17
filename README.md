@@ -1,4 +1,4 @@
-# Prox Secure
+# Shinji SOC
 
 Sistema propio de monitoreo y SOC (centro de operaciones de seguridad)
 para servidores propios, con IA local (Ollama) y conexion opcional a
@@ -69,7 +69,7 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   (`bash`, `wget`, `python`, etc.). Una app que legitimamente hace
   `shell_exec` va a generar falsos positivos; por eso requiere aprobacion
   manual, no bloquea/mata solo.
-- El bloqueo usa fail2ban con un jail dedicado (`proxsecure`) que no tiene
+- El bloqueo usa fail2ban con un jail dedicado (`shinjisoc`) que no tiene
   deteccion propia, solo recibe bloqueos manuales desde el panel. Requiere
   fail2ban instalado en el host (lo instala `install.sh`).
 - Login con usuario + contrasena + MFA (TOTP), cuentas con rol admin o
@@ -103,7 +103,7 @@ usuarios en `/users`. Ver la seccion "Acceso" mas abajo.
   (https://security-tracker.debian.org/tracker/CVE-2017-13716). Por eso
   un CVE de binutils 2.29 aparece contra 2.44. En un Proxmox real, 174
   de 591 hallazgos eran `unimportant` y 417 todavia no tenian urgencia
-  asignada. Prox Secure guarda esa urgencia: los paquetes con todos sus
+  asignada. Shinji SOC guarda esa urgencia: los paquetes con todos sus
   CVEs `unimportant` van a una seccion colapsada en `/vulnerabilities` y
   reciben un texto fijo, sin IA. Los paquetes compilados por Proxmox
   (version con `pve`, como `frr 10.6.1-1+pve3`) se marcan aparte,
@@ -306,10 +306,10 @@ El script se vale solo: instala `python3`/`python3-venv`/`python3-pip`,
 `sudo` y `fail2ban` via `apt` si no estan (no hace falta preparar nada a
 mano en el servidor), crea un usuario de sistema sin privilegios (en el
 grupo `adm`, para poder leer logs del sistema), escribe el codigo del
-agente en `/opt/prox-secure-agent`, arma el virtualenv con sus
-dependencias, el sudoers acotado (`/etc/sudoers.d/prox-secure-agent`,
+agente en `/opt/shinji-soc-agent`, arma el virtualenv con sus
+dependencias, el sudoers acotado (`/etc/sudoers.d/shinji-soc-agent`,
 solo permite `fail2ban-client set * banip/unbanip *` y el wrapper
-`kill_process.sh`) y un servicio systemd (`prox-secure-agent`) con el
+`kill_process.sh`) y un servicio systemd (`shinji-soc-agent`) con el
 agente completo (descubrimiento + metricas + logs + procesos +
 inventario + comandos). Necesita ejecutarse con `bash` (`sudo bash
 install.sh ...`), no con `sh`/`dash` -- usa `$EUID`, que esos shells no
@@ -377,7 +377,7 @@ la pagina del host (`/hosts/<id>`).
   visible para admin). Pide el codigo MFA del admin para confirmar
   (igual que eliminar un host) y, si es correcto, crea un comando que
   el agente ejecuta via `sudo` con `setfacl` (`grant_log_access.sh`):
-  le da a `prox-secure` permiso de **lectura puntual** (ACL `r`/`rX`,
+  le da a `shinji-soc` permiso de **lectura puntual** (ACL `r`/`rX`,
   mas ACL default si es carpeta) sobre esa ruta especifica, sin tocar
   duenos ni los permisos Unix existentes y sin agregar escritura ni
   ejecucion de binarios. El servidor valida que la ruta pedida sea una
@@ -390,7 +390,7 @@ la pagina del host (`/hosts/<id>`).
   estaba bloqueado pasar a la lista de "Logs que vigila".
 
   Si se prefiere hacerlo a mano en vez de usar el boton: agregar
-  `prox-secure` al grupo dueno de esos archivos, o usar `setfacl`
+  `shinji-soc` al grupo dueno de esos archivos, o usar `setfacl`
   directamente si el directorio es de un solo usuario.
 - **Cuentas de servicio**: cualquier cuenta de sistema (por convencion
   Debian/Ubuntu: UID menor a 1000, o shell `nologin`/`false`) que tenga
@@ -401,9 +401,9 @@ la pagina del host (`/hosts/<id>`).
 Si un setup no es estandar (logs en otro lado que el autodescubrimiento
 no encontro, o una cuenta que no cumple esas condiciones), se puede
 seguir fijando `log_paths`/`process_watch.service_users` a mano en
-`/opt/prox-secure-agent/config.yaml` (ver `agent/config.example.yaml`)
+`/opt/shinji-soc-agent/config.yaml` (ver `agent/config.example.yaml`)
 -- lo que se defina ahi gana siempre sobre lo autodetectado. Despues de
-cualquier cambio: `systemctl restart prox-secure-agent`.
+cualquier cambio: `systemctl restart shinji-soc-agent`.
 
 ## Eventos de seguridad: ver, aprobar, bloquear
 
@@ -527,28 +527,28 @@ services:
 
 ## Quitar el agente de un host
 
-`install.sh` deja instalado el comando `prox-secure-uninstall`. En el host,
+`install.sh` deja instalado el comando `shinji-soc-uninstall`. En el host,
 como root:
 
 ```bash
-prox-secure-uninstall --dry-run
+shinji-soc-uninstall --dry-run
 ```
 
 ```bash
-prox-secure-uninstall
+shinji-soc-uninstall
 ```
 
 El primero muestra lo que haria, sin cambiar nada. El segundo pide
 escribir QUITAR; con `--yes` no pregunta. Quita todo lo que puso
 `install.sh`:
 
-- el servicio y `/opt/prox-secure-agent`, incluida la API key;
+- el servicio y `/opt/shinji-soc-agent`, incluida la API key;
 - el sudoers del agente;
-- el jail `proxsecure` de fail2ban (las IPs bloqueadas desde el panel
+- el jail `shinjisoc` de fail2ban (las IPs bloqueadas desde el panel
   quedan desbloqueadas);
 - los permisos de lectura que se dieron con "Dar acceso" (las ACL de
   otros usuarios no se tocan);
-- el usuario `prox-secure`.
+- el usuario `shinji-soc`.
 
 No quita los paquetes (`python3-venv`, `fail2ban`, `acl`, `sudo`), porque
 pueden estar en uso por otras cosas. Correrlo de nuevo no hace nada.
@@ -583,14 +583,14 @@ sin esta opcion Caddy corta la conexion.
    queda en el volumen de Caddy:
 
 ```bash
-docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy/prox-secure-ca.crt
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy/shinji-soc-ca.crt
 ```
 
 2. **Confia en el en Windows**, como administrador. Firefox usa su propio
    almacen: alli se importa desde su configuracion de certificados.
 
 ```bash
-certutil -addstore -f Root caddy\prox-secure-ca.crt
+certutil -addstore -f Root caddy\shinji-soc-ca.crt
 ```
 
 3. **Abre el panel** en `https://localhost`.
@@ -600,11 +600,11 @@ certutil -addstore -f Root caddy\prox-secure-ca.crt
    Las reinstalaciones siguientes con `. .env` lo conservan:
 
 ```bash
-scp caddy/prox-secure-ca.crt root@servidor:/tmp/prox-secure-ca.crt
+scp caddy/shinji-soc-ca.crt root@servidor:/tmp/shinji-soc-ca.crt
 ```
 
 ```bash
-sudo bash -c '. /opt/prox-secure-agent/.env && bash /tmp/install.sh https://192.168.1.10 "$PROX_SECURE_API_KEY" /tmp/prox-secure-ca.crt'
+sudo bash -c '. /opt/shinji-soc-agent/.env && bash /tmp/install.sh https://192.168.1.10 "$SHINJI_SOC_API_KEY" /tmp/shinji-soc-ca.crt'
 ```
 
 5. **Cierra el HTTP directo.** Con todo pasado a HTTPS, pon
@@ -695,7 +695,7 @@ pierde el disco.
 Restaurar:
 
 ```bash
-bash scripts/restore_backup.sh backups/proxsecure-AAAAMMDD-HHMMSS.dump
+bash scripts/restore_backup.sh backups/shinjisoc-AAAAMMDD-HHMMSS.dump
 ```
 
 El script hace estos pasos:
@@ -784,11 +784,11 @@ IA local que corresponde.
    proyecto:
 
 ```bash
-claude mcp add --scope user prox-secure-audit -- python "C:/ruta/a/prox secure/tools/mcp_audit/server.py"
+claude mcp add --scope user shinji-soc-audit -- python "C:/ruta/a/prox secure/tools/mcp_audit/server.py"
 ```
 
 3. En Claude Code, pide por ejemplo "audita las recomendaciones de Prox
-   Secure con prox-secure-audit". Cada lote consume parte del limite de
+   Secure con shinji-soc-audit". Cada lote consume parte del limite de
    tu suscripcion: conviene ir de a un lote.
 
 ## Actualizar versiones
@@ -817,7 +817,7 @@ una por vez:
 4. Actualiza la extension, que no se actualiza sola:
 
 ```bash
-docker compose exec db psql -U proxsecure -d proxsecure -c "ALTER EXTENSION timescaledb UPDATE;"
+docker compose exec db psql -U shinjisoc -d shinjisoc -c "ALTER EXTENSION timescaledb UPDATE;"
 ```
 
 Los respaldos se restauran con la misma version de TimescaleDB con la que

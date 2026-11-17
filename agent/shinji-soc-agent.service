@@ -1,0 +1,17 @@
+[Unit]
+Description=Shinji SOC - agente de monitoreo
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/shinji-soc-agent
+EnvironmentFile=-/opt/shinji-soc-agent/.env
+ExecStart=/opt/shinji-soc-agent/.venv/bin/python /opt/shinji-soc-agent/main.py
+Restart=on-failure
+RestartSec=5
+User=shinji-soc
+Group=shinji-soc
+
+[Install]
+WantedBy=multi-user.target

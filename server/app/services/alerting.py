@@ -116,7 +116,7 @@ async def evaluate_once() -> None:
                     await session.commit()
                     notify.notify_later(
                         f"alert|{host.id}|{rule.id}", rule.severity,
-                        f"Prox Secure · {str(rule.severity).upper()} · {host.name}: {rule.name}",
+                        f"Shinji SOC · {str(rule.severity).upper()} · {host.name}: {rule.name}",
                         f"{rule.metric_field} = {value:.1f} (umbral {rule.operator} {rule.threshold}) en {host.name}.",
                     )
                     snapshot = _metric_snapshot(metric, await _cpu_count(session, host.id))

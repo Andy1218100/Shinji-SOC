@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
-{% block title %}Monitoreo · Prox Secure{% endblock %}
+{% block title %}Monitoreo · Shinji SOC{% endblock %}
 {% block content %}
 <div class="page-header">
   <h1>Monitoreo</h1>
@@ -20,7 +20,7 @@
     <button class="sm" id="copy-host-cmd-btn" type="button">{{ icon("copy", "icon") }} Copiar</button>
   </div>
   <p style="font-size: var(--text-xs); color: var(--text-muted); margin-top: var(--space-2);">
-    Necesitas copiar antes la carpeta <code>agent/</code> a ese servidor (<code>scp -r agent usuario@servidor:/tmp/prox-secure-agent</code>).
+    Necesitas copiar antes la carpeta <code>agent/</code> a ese servidor (<code>scp -r agent usuario@servidor:/tmp/shinji-soc-agent</code>).
     El comando de arriba asume que ese servidor puede llegar a <strong>{{ request.url.scheme }}://{{ request.url.netloc }}</strong> --
     si esta en otra red, cambia esa parte por una direccion que si pueda alcanzar (IP publica, VPN, etc.).
     La API key no se vuelve a mostrar; si la perdes, hay que reinstalar con una nueva.

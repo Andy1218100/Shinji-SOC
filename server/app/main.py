@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         task.cancel()
 
 
-app = FastAPI(title="Prox Secure", lifespan=lifespan)
+app = FastAPI(title="Shinji SOC", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 

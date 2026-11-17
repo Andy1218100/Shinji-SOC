@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger("auth_watch")
 
 STATE_PATH = os.environ.get(
-    "PROX_SECURE_AUTH_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
+    "SHINJI_SOC_AUTH_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
 )
 AUTH_LOG = "/var/log/auth.log"
 MAX_ENTRIES_PER_POLL = 5000

@@ -1,4 +1,4 @@
-// Prox Secure — shared client behavior: toasts, sign-out, sidebar badges.
+// Shinji SOC — shared client behavior: toasts, sign-out, sidebar badges.
 // La sesion vive en una cookie HttpOnly (no en localStorage): el navegador
 // la manda sola en cada fetch del mismo origen, el JS nunca la toca.
 
@@ -64,7 +64,7 @@ function renderRecoveryCodes(container, codes, { username = "", doneLabel = "Con
       <button type="button" class="primary" data-rc="done" disabled>${escHtml(doneLabel)}</button>
     </div>`;
   const text = [
-    `Prox Secure: codigos de respaldo${username ? " de " + username : ""}`,
+    `Shinji SOC: codigos de respaldo${username ? " de " + username : ""}`,
     `Generados: ${new Date().toLocaleString()}`,
     "Cada codigo sirve una sola vez. Generar codigos nuevos invalida estos.",
     "",
@@ -83,7 +83,7 @@ function renderRecoveryCodes(container, codes, { username = "", doneLabel = "Con
     const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = "prox-secure-codigos-de-respaldo.txt";
+    a.download = "shinji-soc-codigos-de-respaldo.txt";
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });

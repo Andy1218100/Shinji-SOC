@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Restaura un respaldo de ./backups sobre la base de Prox Secure.
+# Restaura un respaldo de ./backups sobre la base de Shinji SOC.
 #
 # Uso (desde la carpeta del proyecto):
-#   bash scripts/restore_backup.sh backups/proxsecure-AAAAMMDD-HHMMSS.dump
+#   bash scripts/restore_backup.sh backups/shinjisoc-AAAAMMDD-HHMMSS.dump
 #
 # Pasos (los que indica TimescaleDB para pg_restore, sin -j:
 # https://docs.timescale.com/self-hosted/latest/backup-and-restore/logical-backup):
@@ -19,14 +19,14 @@ cd "$(dirname "$0")/.."
 
 dump="${1:-}"
 if [ -z "$dump" ] || [ ! -f "$dump" ]; then
-  echo "Uso: bash scripts/restore_backup.sh backups/proxsecure-AAAAMMDD-HHMMSS.dump" >&2
-  ls -1t backups/proxsecure-*.dump 2>/dev/null | head -n 5 | sed 's/^/  disponible: /' >&2
+  echo "Uso: bash scripts/restore_backup.sh backups/shinjisoc-AAAAMMDD-HHMMSS.dump" >&2
+  ls -1t backups/shinjisoc-*.dump backups/proxsecure-*.dump 2>/dev/null | head -n 5 | sed 's/^/  disponible: /' >&2
   exit 1
 fi
 
 if [ -f .env ]; then set -a; . ./.env; set +a; fi
-db="${POSTGRES_DB:-proxsecure}"
-user="${POSTGRES_USER:-proxsecure}"
+db="${POSTGRES_DB:-shinjisoc}"
+user="${POSTGRES_USER:-shinjisoc}"
 psql_db() { docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "$user" -d "$1" -q "${@:2}"; }
 
 echo "Esto REEMPLAZA toda la base '$db' por el contenido de $dump."

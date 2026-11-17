@@ -16,7 +16,7 @@ from app.core.config import settings
 
 _hasher = PasswordHasher()
 
-SESSION_COOKIE = "proxsecure_session"
+SESSION_COOKIE = "shinjisoc_session"
 PENDING_COOKIE_MAX_AGE = 600  # 10 minutos para completar login/MFA/setup
 MFA_CHANGE_MAX_AGE = 900  # 15 minutos para escanear el QR del telefono nuevo
 
@@ -50,7 +50,7 @@ def generate_mfa_secret() -> str:
 
 
 def totp_uri(username: str, secret: str) -> str:
-    return pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="Prox Secure")
+    return pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name="Shinji SOC")
 
 
 def verify_totp(secret: str, code: str) -> bool:

@@ -34,8 +34,8 @@ write_status() {
 
 do_backup() {
   ts=$(date -u +%Y%m%d-%H%M%S)
-  part="$BACKUP_DIR/.proxsecure-$ts.dump.part"
-  final="$BACKUP_DIR/proxsecure-$ts.dump"
+  part="$BACKUP_DIR/.shinjisoc-$ts.dump.part"
+  final="$BACKUP_DIR/shinjisoc-$ts.dump"
   if PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$part" 2> "$BACKUP_DIR/.last_stderr"; then
     mv "$part" "$final"
     chmod 600 "$final"
@@ -48,17 +48,18 @@ do_backup() {
   fi
   # Retencion: los BACKUP_KEEP mas nuevos.
   keep=$(env_value BACKUP_KEEP 14)
-  ls -1t "$BACKUP_DIR"/proxsecure-*.dump 2>/dev/null | tail -n +"$((keep + 1))" | while read -r old; do
+  # proxsecure-*: respaldos de antes del cambio de nombre; rotan igual.
+  ls -1t "$BACKUP_DIR"/shinjisoc-*.dump "$BACKUP_DIR"/proxsecure-*.dump 2>/dev/null | tail -n +"$((keep + 1))" | while read -r old; do
     rm -f "$old" && echo "Borrado por retencion: $old"
   done
 }
 
-: "${POSTGRES_USER:=proxsecure}" "${POSTGRES_PASSWORD:=proxsecure}" "${POSTGRES_DB:=proxsecure}"
+: "${POSTGRES_USER:=shinjisoc}" "${POSTGRES_PASSWORD:=shinjisoc}" "${POSTGRES_DB:=shinjisoc}"
 echo "Respaldos en $BACKUP_DIR (intervalo $(env_value BACKUP_INTERVAL_HOURS 24) h, se conservan $(env_value BACKUP_KEEP 14))"
 
 while true; do
   interval=$(env_value BACKUP_INTERVAL_HOURS 24)
-  recent=$(find "$BACKUP_DIR" -maxdepth 1 -name 'proxsecure-*.dump' -mmin -"$((interval * 60))" 2>/dev/null | head -n1)
+  recent=$(find "$BACKUP_DIR" -maxdepth 1 \( -name 'shinjisoc-*.dump' -o -name 'proxsecure-*.dump' \) -mmin -"$((interval * 60))" 2>/dev/null | head -n1)
   if [ -f "$BACKUP_DIR/.request" ] || [ -z "$recent" ]; then
     rm -f "$BACKUP_DIR/.request"
     do_backup

@@ -13,7 +13,7 @@ import re
 from datetime import datetime
 
 STATE_PATH = os.environ.get(
-    "PROX_SECURE_LOG_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_state.json")
+    "SHINJI_SOC_LOG_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_state.json")
 )
 
 _COMBINED_RE = re.compile(

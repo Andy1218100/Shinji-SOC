@@ -1,4 +1,4 @@
-# Proxy HTTPS delante del servidor de Prox Secure (contenedor "caddy").
+# Proxy HTTPS delante del servidor de Shinji SOC (contenedor "caddy").
 #
 # Dos modos, segun el .env:
 #   - Red local (por defecto): PANEL_ADDRESS="localhost, 192.168.1.10" y

@@ -376,7 +376,7 @@ async def scan_host(session: AsyncSession, host: Host) -> int:
         pkgs = ", ".join(f"{p} ({n})" for p, n in sorted(new_fixable.items())[:10])
         total = sum(new_fixable.values())
         asyncio.create_task(notify.send(
-            f"Prox Secure · {host.name}: {total} vulnerabilidades con solucion",
+            f"Shinji SOC · {host.name}: {total} vulnerabilidades con solucion",
             f"Hay version corregida para: {pkgs}" + (" y otros." if len(new_fixable) > 10 else ".")
             + f"\nActualiza con apt en {host.name} y usa \"Escanear ahora\" en Vulnerabilidades.",
             "warning",

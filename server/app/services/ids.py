@@ -1,4 +1,4 @@
-"""Motor de deteccion de intrusos para Prox Secure.
+"""Motor de deteccion de intrusos para Shinji SOC.
 
 Es heuristico (reglas + conteos en ventana deslizante), no un modelo de
 machine learning entrenado. "Aprende" en el sentido de que acumula, por
@@ -211,7 +211,7 @@ async def create_event(
 
     notify.notify_later(
         f"sec|{host.id}|{kind}", severity,
-        f"Prox Secure · {severity.upper()} · {host.name}: {KIND_LABELS.get(kind, kind)}",
+        f"Shinji SOC · {severity.upper()} · {host.name}: {KIND_LABELS.get(kind, kind)}",
         f"{KIND_LABELS.get(kind, kind)} en {host.name}{notify.ip_text(source_ip)}.\n"
         f"Accion sugerida: {ACTION_LABELS.get(suggested_action, 'ninguna')} (requiere aprobacion en el panel, Seguridad).",
     )

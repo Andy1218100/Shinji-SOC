@@ -18,7 +18,7 @@ from app.services import notify
 
 logger = logging.getLogger("backups")
 
-BACKUP_DIR = Path(os.environ.get("PROX_SECURE_BACKUP_DIR", "/backups"))
+BACKUP_DIR = Path(os.environ.get("SHINJI_SOC_BACKUP_DIR", "/backups"))
 STALE_NOTIFY_EVERY_SECONDS = 86400
 _last_stale_notice = 0.0
 
@@ -36,7 +36,9 @@ def _read_status() -> dict:
 
 
 def status() -> dict:
-    files = sorted(BACKUP_DIR.glob("proxsecure-*.dump"), key=lambda p: p.stat().st_mtime, reverse=True) if available() else []
+    # "proxsecure-" es el prefijo de los respaldos hechos antes del cambio de nombre.
+    found = [*BACKUP_DIR.glob("shinjisoc-*.dump"), *BACKUP_DIR.glob("proxsecure-*.dump")] if available() else []
+    files = sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
     items = [
         {"name": p.name, "size": p.stat().st_size,
          "created": datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()}
@@ -74,7 +76,7 @@ async def check_stale() -> None:
     logger.warning("Respaldos atrasados: ultimo %s %s", age, detail)
     if notify.channels():
         await notify.send(
-            "Prox Secure · respaldos atrasados",
+            "Shinji SOC · respaldos atrasados",
             f"El ultimo respaldo de la base fue {age} (intervalo configurado: {settings.backup_interval_hours} h)."
             + (f"\nUltimo error: {detail}" if detail else "")
             + "\nRevisa: docker compose logs backup",

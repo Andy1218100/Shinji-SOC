@@ -87,8 +87,8 @@ async def notify_test():
     if not notify.channels():
         raise HTTPException(status_code=422, detail="No hay ningun canal configurado: guarda primero Telegram, ntfy o correo")
     results = await notify.send(
-        "Prox Secure · prueba de notificacion",
-        "Si lees esto, los avisos de Prox Secure llegan por este canal.",
+        "Shinji SOC · prueba de notificacion",
+        "Si lees esto, los avisos de Shinji SOC llegan por este canal.",
         "warning",
     )
     return {"results": results}

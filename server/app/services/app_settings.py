@@ -24,8 +24,11 @@ import httpx
 
 from app.core.config import settings
 
-ENV_FILE = Path(os.environ.get("PROX_SECURE_ENV_FILE", "/config/.env"))
-APPENDED_HEADER = "# Configurado desde la pagina de Prox Secure"
+ENV_FILE = Path(os.environ.get("SHINJI_SOC_ENV_FILE", "/config/.env"))
+APPENDED_HEADER = "# Configurado desde la pagina de Shinji SOC"
+# Cabecera que escribian las versiones anteriores al cambio de nombre: si ya
+# esta en el .env, no se agrega otra.
+LEGACY_HEADERS = ("# Configurado desde la pagina de Prox Secure",)
 
 
 @dataclass(frozen=True)
@@ -205,7 +208,7 @@ def write_env_values(updates: dict[str, str]) -> None:
         else:
             out.append(line)
     if pending:
-        if APPENDED_HEADER not in out:
+        if APPENDED_HEADER not in out and not any(h in out for h in LEGACY_HEADERS):
             out += ["", APPENDED_HEADER]
         out += [f"{k}={_quote(v)}" for k, v in pending.items()]
     content = "\n".join(out) + "\n"

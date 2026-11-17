@@ -6,16 +6,16 @@ services:
     image: timescale/timescaledb:2.32.0-pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-proxsecure}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proxsecure}
-      POSTGRES_DB: ${POSTGRES_DB:-proxsecure}
+      POSTGRES_USER: ${POSTGRES_USER:-shinjisoc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-shinjisoc}
+      POSTGRES_DB: ${POSTGRES_DB:-shinjisoc}
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
       # Solo desde este equipo: la base no tiene por que verse en la red.
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proxsecure}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-shinjisoc}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -46,8 +46,8 @@ services:
       - .env
     environment:
       # El .env montado (abajo) lo reescribe la pagina de Configuracion.
-      PROX_SECURE_ENV_FILE: /config/.env
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-proxsecure}:${POSTGRES_PASSWORD:-proxsecure}@db:5432/${POSTGRES_DB:-proxsecure}
+      SHINJI_SOC_ENV_FILE: /config/.env
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shinjisoc}:${POSTGRES_PASSWORD:-shinjisoc}@db:5432/${POSTGRES_DB:-shinjisoc}
       OLLAMA_HOST: http://ollama:11434
     depends_on:
       db:

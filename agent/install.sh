@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala el agente de Prox Secure en un servidor Linux (Debian/Ubuntu).
+# Instala el agente de Shinji SOC en un servidor Linux (Debian/Ubuntu).
 # Autocontenido: alcanza con este archivo, no hace falta nada mas de este
 # repo en el servidor. Generado por _build_install.sh -- no editar a mano
 # los archivos embebidos de aca abajo, editar el fuente real en agent/ y
@@ -9,11 +9,11 @@ set -euo pipefail
 
 SERVER_URL="${1:?Falta server_url, ej: http://10.0.0.5:8000}"
 API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)}"
-INSTALL_DIR="/opt/prox-secure-agent"
+INSTALL_DIR="/opt/shinji-soc-agent"
 # Opcional: certificado raiz de la CA interna de Caddy (servidor con HTTPS en
 # red local, ver README). Al reinstalar con ". .env && install.sh ..." se
 # toma el que ya estaba configurado.
-CA_FILE="${3:-${PROX_SECURE_CA_FILE:-}}"
+CA_FILE="${3:-${SHINJI_SOC_CA_FILE:-}}"
 if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
   echo "No existe el certificado $CA_FILE" >&2
   exit 1
@@ -21,6 +21,17 @@ fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "Este script debe ejecutarse como root (sudo)." >&2
+  exit 1
+fi
+
+# El proyecto se llamaba "Prox Secure": un agente de entonces usa otro
+# usuario, servicio y carpeta, y quedarian los dos corriendo. Se quita
+# primero con uninstall.sh (que reconoce los dos nombres).
+if [ -d /opt/prox-secure-agent ] || [ -f /etc/systemd/system/prox-secure-agent.service ]; then
+  echo "Hay un agente instalado con el nombre anterior (Prox Secure, en /opt/prox-secure-agent)." >&2
+  echo "Quitalo primero y despues vuelve a correr este instalador:" >&2
+  echo "  sudo grep API_KEY /opt/prox-secure-agent/.env    # anota la API key para reusarla" >&2
+  echo "  sudo bash uninstall.sh --yes                     # el uninstall.sh de esta version" >&2
   exit 1
 fi
 
@@ -39,21 +50,21 @@ echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, a
 apt-get update -y
 apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
 
-id -u prox-secure &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin prox-secure
+id -u shinji-soc &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin shinji-soc
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
 # /var/log/apache2, etc. Sin esto, los logs que el agente autodetecta
 # (ver discovery.py) existen pero no los puede leer.
-usermod -aG adm prox-secure
+usermod -aG adm shinji-soc
 
 mkdir -p "$INSTALL_DIR"
 
 echo "Escribiendo los archivos del agente en $INSTALL_DIR..."
 mkdir -p "$(dirname "$INSTALL_DIR/commands.py")"
-cat > "$INSTALL_DIR/commands.py" <<'PROXSECURE_EMBED_1_EOF'
+cat > "$INSTALL_DIR/commands.py" <<'SHINJISOC_EMBED_1_EOF'
 """Ejecuta comandos aprobados por el administrador desde el panel
 (bloquear IP via fail2ban, terminar un proceso, dar acceso de lectura a
 un log bloqueado) usando los permisos acotados definidos en
-sudoers/prox-secure-agent. El agente en si corre sin privilegios; solo
+sudoers/shinji-soc-agent. El agente en si corre sin privilegios; solo
 esas acciones puntuales usan sudo.
 """
 
@@ -138,17 +149,17 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
             logger.info("Informe de sistema reenviado tras otorgar acceso de lectura")
         except Exception:
             logger.exception("Fallo reenviando el informe de sistema tras otorgar acceso")
-PROXSECURE_EMBED_1_EOF
+SHINJISOC_EMBED_1_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/config.py")"
-cat > "$INSTALL_DIR/config.py" <<'PROXSECURE_EMBED_2_EOF'
+cat > "$INSTALL_DIR/config.py" <<'SHINJISOC_EMBED_2_EOF'
 import os
 import sys
 
 import yaml
 
 CONFIG_PATH = os.environ.get(
-    "PROX_SECURE_CONFIG", os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+    "SHINJI_SOC_CONFIG", os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
 )
 
 _DEFAULTS = {
@@ -158,7 +169,7 @@ _DEFAULTS = {
     "log_paths": [],
     "process_watch": {"interval_seconds": 10, "service_users": []},
     "command_poll_interval_seconds": 10,
-    "fail2ban_jail": "proxsecure",
+    "fail2ban_jail": "shinjisoc",
     "inventory_interval_seconds": 86400,
     "discovery_interval_seconds": 86400,
 }
@@ -171,18 +182,18 @@ def load() -> dict:
         with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
             config.update(yaml.safe_load(fh) or {})
 
-    config["server_url"] = os.environ.get("PROX_SECURE_SERVER_URL", config["server_url"])
-    config["api_key"] = os.environ.get("PROX_SECURE_API_KEY", config["api_key"])
+    config["server_url"] = os.environ.get("SHINJI_SOC_SERVER_URL", config["server_url"])
+    config["api_key"] = os.environ.get("SHINJI_SOC_API_KEY", config["api_key"])
 
     if not config["api_key"]:
-        print("Falta api_key. Define config.yaml o PROX_SECURE_API_KEY.", file=sys.stderr)
+        print("Falta api_key. Define config.yaml o SHINJI_SOC_API_KEY.", file=sys.stderr)
         sys.exit(1)
 
     return config
-PROXSECURE_EMBED_2_EOF
+SHINJISOC_EMBED_2_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/discovery.py")"
-cat > "$INSTALL_DIR/discovery.py" <<'PROXSECURE_EMBED_3_EOF'
+cat > "$INSTALL_DIR/discovery.py" <<'SHINJISOC_EMBED_3_EOF'
 """Descubrimiento del sistema: que es este host, que corre, que puertos
 tiene abiertos, y que logs/cuentas de servicio tiene sentido vigilar en
 *este* host en particular -- en vez de depender de que el admin edite
@@ -233,7 +244,7 @@ WEB_SERVER_LOG_CANDIDATES = {
 # si mismo -- cada comando aprobado se ejecuta via "sudo ...", que es
 # justo el patron que busca process_watch.py) y root (root ejecutando lo
 # que sea no es una anomalia, es el superusuario).
-WATCH_EXCLUDED_USERS = {"root", "prox-secure"}
+WATCH_EXCLUDED_USERS = {"root", "shinji-soc"}
 NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", ""}
 SYSTEM_UID_MAX = 999  # convencion Debian/Ubuntu: UIDs de cuentas de sistema son < 1000
 
@@ -489,10 +500,10 @@ def full_report() -> dict:
 
     report["auth_log_source"] = auth_watch.detect_source()
     return report
-PROXSECURE_EMBED_3_EOF
+SHINJISOC_EMBED_3_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/inventory.py")"
-cat > "$INSTALL_DIR/inventory.py" <<'PROXSECURE_EMBED_4_EOF'
+cat > "$INSTALL_DIR/inventory.py" <<'SHINJISOC_EMBED_4_EOF'
 """Inventario de paquetes instalados (dpkg), para que el servidor pueda
 cruzarlo contra OSV.dev y detectar software con vulnerabilidades
 conocidas. Solo funciona en sistemas basados en Debian/Ubuntu (como el
@@ -574,10 +585,10 @@ async def send(client: httpx.AsyncClient, base_url: str, headers: dict) -> int:
     resp = await client.post(f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers)
     resp.raise_for_status()
     return len(packages)
-PROXSECURE_EMBED_4_EOF
+SHINJISOC_EMBED_4_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/auth_watch.py")"
-cat > "$INSTALL_DIR/auth_watch.py" <<'PROXSECURE_EMBED_5_EOF'
+cat > "$INSTALL_DIR/auth_watch.py" <<'SHINJISOC_EMBED_5_EOF'
 """Intentos de inicio de sesion por SSH y en la interfaz web de Proxmox.
 
 Fuente: el journal de systemd (journalctl). Proxmox VE 8 en adelante no
@@ -609,7 +620,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger("auth_watch")
 
 STATE_PATH = os.environ.get(
-    "PROX_SECURE_AUTH_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
+    "SHINJI_SOC_AUTH_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "auth_state.json")
 )
 AUTH_LOG = "/var/log/auth.log"
 MAX_ENTRIES_PER_POLL = 5000
@@ -735,10 +746,10 @@ def read_new_entries(source: str) -> list[dict]:
     entries = _read_journal(state) if source == "journal" else _read_auth_log(state)
     _save_state(state)
     return entries
-PROXSECURE_EMBED_5_EOF
+SHINJISOC_EMBED_5_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/log_tailer.py")"
-cat > "$INSTALL_DIR/log_tailer.py" <<'PROXSECURE_EMBED_6_EOF'
+cat > "$INSTALL_DIR/log_tailer.py" <<'SHINJISOC_EMBED_6_EOF'
 """Lee nuevas lineas de logs de acceso (formato 'combined' de nginx/apache)
 y las devuelve como entradas estructuradas para mandar al servidor.
 
@@ -754,7 +765,7 @@ import re
 from datetime import datetime
 
 STATE_PATH = os.environ.get(
-    "PROX_SECURE_LOG_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_state.json")
+    "SHINJI_SOC_LOG_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_state.json")
 )
 
 _COMBINED_RE = re.compile(
@@ -830,11 +841,11 @@ def read_new_entries(log_paths: list[str]) -> list[dict]:
 
     _save_state(state)
     return entries
-PROXSECURE_EMBED_6_EOF
+SHINJISOC_EMBED_6_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/main.py")"
-cat > "$INSTALL_DIR/main.py" <<'PROXSECURE_EMBED_7_EOF'
-"""Agente Prox Secure: un solo proceso con varias tareas concurrentes.
+cat > "$INSTALL_DIR/main.py" <<'SHINJISOC_EMBED_7_EOF'
+"""Agente Shinji SOC: un solo proceso con varias tareas concurrentes.
 
 - discovery: lo primero que hace el agente al arrancar es describir el
   sistema (SO, hardware, servicios, puertos) y mandarlo al servidor, que
@@ -853,7 +864,7 @@ cat > "$INSTALL_DIR/main.py" <<'PROXSECURE_EMBED_7_EOF'
 - commands_loop: ejecuta bloqueos/kills aprobados desde el panel.
 
 Corre sin privilegios salvo las acciones puntuales de commands.py, que
-usan sudo acotado (ver sudoers/prox-secure-agent).
+usan sudo acotado (ver sudoers/shinji-soc-agent).
 """
 
 import asyncio
@@ -990,12 +1001,12 @@ async def main() -> None:
     base_url = cfg["server_url"].rstrip("/")
     headers = {"X-API-Key": cfg["api_key"]}
 
-    logger.info("Agente Prox Secure iniciado, servidor=%s", base_url)
+    logger.info("Agente Shinji SOC iniciado, servidor=%s", base_url)
 
     # Servidor con HTTPS de CA interna (Caddy "tls internal", red local):
-    # PROX_SECURE_CA_FILE apunta a su certificado raiz. Sin la variable se
+    # SHINJI_SOC_CA_FILE apunta a su certificado raiz. Sin la variable se
     # usan las CAs del sistema (sirve para Let's Encrypt y para http://).
-    verify = os.environ.get("PROX_SECURE_CA_FILE") or True
+    verify = os.environ.get("SHINJI_SOC_CA_FILE") or True
     async with httpx.AsyncClient(timeout=30, verify=verify) as client:
         # Lo primero que hace el agente, antes de arrancar a monitorear:
         # describir el sistema. El resto de los loops usa ese resultado
@@ -1025,10 +1036,10 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-PROXSECURE_EMBED_7_EOF
+SHINJISOC_EMBED_7_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/metrics.py")"
-cat > "$INSTALL_DIR/metrics.py" <<'PROXSECURE_EMBED_8_EOF'
+cat > "$INSTALL_DIR/metrics.py" <<'SHINJISOC_EMBED_8_EOF'
 import os
 import time
 from datetime import datetime, timezone
@@ -1101,10 +1112,10 @@ def collect() -> dict:
         "net_tx_kbps": net_tx_kbps,
         "uptime_seconds": int(time.time() - psutil.boot_time()),
     }
-PROXSECURE_EMBED_8_EOF
+SHINJISOC_EMBED_8_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/process_watch.py")"
-cat > "$INSTALL_DIR/process_watch.py" <<'PROXSECURE_EMBED_9_EOF'
+cat > "$INSTALL_DIR/process_watch.py" <<'SHINJISOC_EMBED_9_EOF'
 """Vigila procesos de cuentas de servicio (www-data, nginx, etc.) buscando
 ejecucion de binarios que normalmente no deberian correr bajo esas cuentas
 (shells, intepretes, herramientas de red) -- indicador clasico de webshell
@@ -1207,17 +1218,17 @@ def scan(service_users: list[str]) -> list[dict]:
 
     _reported_pids.intersection_update(live_pids)
     return anomalies
-PROXSECURE_EMBED_9_EOF
+SHINJISOC_EMBED_9_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/requirements.txt")"
-cat > "$INSTALL_DIR/requirements.txt" <<'PROXSECURE_EMBED_10_EOF'
+cat > "$INSTALL_DIR/requirements.txt" <<'SHINJISOC_EMBED_10_EOF'
 psutil==6.1.0
 httpx==0.27.2
 PyYAML==6.0.2
-PROXSECURE_EMBED_10_EOF
+SHINJISOC_EMBED_10_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/kill_process.sh")"
-cat > "$INSTALL_DIR/kill_process.sh" <<'PROXSECURE_EMBED_11_EOF'
+cat > "$INSTALL_DIR/kill_process.sh" <<'SHINJISOC_EMBED_11_EOF'
 #!/usr/bin/env bash
 # Mata un proceso SOLO si su cmdline actual todavia contiene la cadena
 # esperada, para evitar matar un PID reciclado que ya no es el proceso
@@ -1241,16 +1252,16 @@ fi
 
 kill -9 "$PID"
 echo "pid $PID terminado (cmdline: $CMDLINE)"
-PROXSECURE_EMBED_11_EOF
+SHINJISOC_EMBED_11_EOF
 chmod 755 "$INSTALL_DIR/kill_process.sh"
 
 mkdir -p "$(dirname "$INSTALL_DIR/grant_log_access.sh")"
-cat > "$INSTALL_DIR/grant_log_access.sh" <<'PROXSECURE_EMBED_12_EOF'
+cat > "$INSTALL_DIR/grant_log_access.sh" <<'SHINJISOC_EMBED_12_EOF'
 #!/usr/bin/env bash
-# Da a prox-secure permiso de LECTURA (via ACL -- nunca toca duenos ni
+# Da a shinji-soc permiso de LECTURA (via ACL -- nunca toca duenos ni
 # permisos existentes, nunca agrega escritura) sobre una carpeta o
 # archivo que discovery.py encontro pero no pudo abrir/leer. Pensado
-# para correr via sudo (ver sudoers/prox-secure-agent).
+# para correr via sudo (ver sudoers/shinji-soc-agent).
 #
 # Solo opera dentro de las mismas rutas donde discovery.py busca logs
 # (ver LOG_SCAN_ROOTS en discovery.py) -- y nunca sobre /root: el riesgo
@@ -1295,46 +1306,50 @@ if [[ -d "$RESOLVED" ]]; then
   # rX en vez de rx: la X mayuscula solo da ejecucion (necesaria para
   # poder "entrar") a lo que ya es un directorio, nunca a un archivo
   # suelto -- no vuelve ejecutable nada que no lo fuera.
-  setfacl -R -m u:prox-secure:rX "$RESOLVED"
+  setfacl -R -m u:shinji-soc:rX "$RESOLVED"
   # ACL por defecto: para que los logs que esa app cree DESPUES de hoy
   # (rotacion diaria, nuevas instancias, etc.) hereden el mismo permiso
   # sin tener que repetir esto cada vez.
-  setfacl -R -d -m u:prox-secure:rX "$RESOLVED"
+  setfacl -R -d -m u:shinji-soc:rX "$RESOLVED"
 else
-  setfacl -m u:prox-secure:r "$RESOLVED"
+  setfacl -m u:shinji-soc:r "$RESOLVED"
 fi
 
-echo "acceso de lectura otorgado a prox-secure sobre $RESOLVED"
-PROXSECURE_EMBED_12_EOF
+echo "acceso de lectura otorgado a shinji-soc sobre $RESOLVED"
+SHINJISOC_EMBED_12_EOF
 chmod 755 "$INSTALL_DIR/grant_log_access.sh"
 
-mkdir -p "$(dirname "/usr/local/sbin/prox-secure-uninstall")"
-cat > "/usr/local/sbin/prox-secure-uninstall" <<'PROXSECURE_EMBED_13_EOF'
+mkdir -p "$(dirname "/usr/local/sbin/shinji-soc-uninstall")"
+cat > "/usr/local/sbin/shinji-soc-uninstall" <<'SHINJISOC_EMBED_13_EOF'
 #!/usr/bin/env bash
-# Quita el agente de Prox Secure de este host: todo lo que puso install.sh.
+# Quita el agente de Shinji SOC de este host: todo lo que puso install.sh.
+# Tambien quita un agente instalado con el nombre anterior del proyecto
+# (Prox Secure: /opt/prox-secure-agent, usuario prox-secure).
 #
 # Uso (como root):
-#   prox-secure-uninstall              pide confirmacion
-#   prox-secure-uninstall --dry-run    solo muestra lo que haria
-#   prox-secure-uninstall --yes        sin preguntar
-# (install.sh lo deja instalado como /usr/local/sbin/prox-secure-uninstall;
+#   shinji-soc-uninstall              pide confirmacion
+#   shinji-soc-uninstall --dry-run    solo muestra lo que haria
+#   shinji-soc-uninstall --yes        sin preguntar
+# (install.sh lo deja instalado como /usr/local/sbin/shinji-soc-uninstall;
 # tambien se puede copiar y correr con "sudo bash uninstall.sh".)
 #
-# Quita: el servicio, /opt/prox-secure-agent (incluida su API key), el
-# sudoers del agente, el jail "proxsecure" de fail2ban (las IPs bloqueadas
-# desde el panel quedan desbloqueadas), los permisos de lectura (ACL) que
-# se dieron desde el panel con "Dar acceso", y el usuario prox-secure.
+# Quita: el servicio, la carpeta del agente en /opt (incluida su API key),
+# el sudoers del agente, su jail de fail2ban (las IPs bloqueadas desde el
+# panel quedan desbloqueadas), los permisos de lectura (ACL) que se dieron
+# desde el panel con "Dar acceso", y el usuario del agente.
 #
 # No quita los paquetes que instalo install.sh (python3-venv, fail2ban,
 # acl, sudo): pueden estar en uso por otras cosas. Tampoco toca el
 # servidor: el host y su historial se borran desde el panel.
 set -uo pipefail
 
-INSTALL_DIR="/opt/prox-secure-agent"
-SERVICE="prox-secure-agent"
-AGENT_USER="prox-secure"
 ACL_ROOTS=(/var/log /opt /srv /home)   # los mismos que permite grant_log_access.sh
-SELF="/usr/local/sbin/prox-secure-uninstall"
+
+# Cada instalacion: nombre|carpeta|servicio|usuario|sudoers|jail|log de fail2ban|comando
+INSTALLS=(
+  "Shinji SOC|/opt/shinji-soc-agent|shinji-soc-agent|shinji-soc|/etc/sudoers.d/shinji-soc-agent|shinjisoc|/var/log/shinji-soc-fail2ban.log|/usr/local/sbin/shinji-soc-uninstall"
+  "Prox Secure (nombre anterior)|/opt/prox-secure-agent|prox-secure-agent|prox-secure|/etc/sudoers.d/prox-secure-agent|proxsecure|/var/log/prox-secure-fail2ban.log|/usr/local/sbin/prox-secure-uninstall"
+)
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -1342,7 +1357,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     -y|--yes) ASSUME_YES=1 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "Opcion desconocida: $arg (usa --dry-run, --yes o --help)" >&2; exit 2 ;;
   esac
 done
@@ -1362,48 +1377,65 @@ run() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-echo "Desinstalacion del agente de Prox Secure en $(hostname)"
+echo "Desinstalacion del agente de Shinji SOC en $(hostname)"
 [ "$DRY_RUN" -eq 1 ] && echo "(simulacion: no se cambia nada)"
-echo
 
-# --- lo que hay instalado
-found=0
-[ -d "$INSTALL_DIR" ] && { echo "- agente en $INSTALL_DIR"; found=1; }
-[ -f "/etc/systemd/system/$SERVICE.service" ] && { echo "- servicio $SERVICE"; found=1; }
-[ -f /etc/sudoers.d/prox-secure-agent ] && { echo "- sudoers /etc/sudoers.d/prox-secure-agent"; found=1; }
-[ -f /etc/fail2ban/jail.d/proxsecure.conf ] && { echo "- jail proxsecure de fail2ban"; found=1; }
-id -u "$AGENT_USER" >/dev/null 2>&1 && { echo "- usuario $AGENT_USER"; found=1; }
+# --- que hay instalado de cada nombre
+found_any=0
+declare -A ACL_FILES ACL_DEFAULTS FOUND
+for entry in "${INSTALLS[@]}"; do
+  IFS='|' read -r label dir service user sudoers jail f2blog self <<<"$entry"
+  found=0
+  lines=()
+  [ -d "$dir" ] && { lines+=("agente en $dir"); found=1; }
+  [ -f "/etc/systemd/system/$service.service" ] && { lines+=("servicio $service"); found=1; }
+  [ -f "$sudoers" ] && { lines+=("sudoers $sudoers"); found=1; }
+  [ -f "/etc/fail2ban/jail.d/$jail.conf" ] && { lines+=("jail $jail de fail2ban"); found=1; }
+  id -u "$user" >/dev/null 2>&1 && { lines+=("usuario $user"); found=1; }
 
-banned=""
-if have fail2ban-client && fail2ban-client status proxsecure >/dev/null 2>&1; then
-  banned=$(fail2ban-client status proxsecure 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p')
-  [ -n "$banned" ] && echo "  IPs bloqueadas desde el panel que quedaran desbloqueadas: $banned"
-fi
-
-# ACLs que dio "Dar acceso" (grant_log_access.sh). Se buscan antes de
-# borrar el usuario: despues getfacl solo mostraria su numero.
-acl_files=()
-acl_default=()
-if have getfacl && id -u "$AGENT_USER" >/dev/null 2>&1; then
-  roots=()
-  for r in "${ACL_ROOTS[@]}"; do [ -e "$r" ] && roots+=("$r"); done
-  if [ "${#roots[@]}" -gt 0 ]; then
-    echo "  Buscando permisos de lectura del agente en ${roots[*]} (puede tardar en carpetas grandes)..."
-    while IFS=$'\t' read -r kind path; do
-      case "$path" in "$INSTALL_DIR"|"$INSTALL_DIR"/*) continue ;; esac  # se borra entera
-      if [ "$kind" = "d" ]; then acl_default+=("$path"); else acl_files+=("$path"); fi
-    done < <(getfacl -R -s -p "${roots[@]}" 2>/dev/null | awk -v u="$AGENT_USER" '
-      /^# file: / { file = substr($0, 9); next }
-      $0 ~ "^user:" u ":"         { print "a\t" file }
-      $0 ~ "^default:user:" u ":" { print "d\t" file }')
+  # ACLs que dio "Dar acceso" (grant_log_access.sh). Se buscan antes de
+  # borrar el usuario: despues getfacl solo mostraria su numero.
+  files="" defaults=""
+  if have getfacl && id -u "$user" >/dev/null 2>&1; then
+    roots=()
+    for r in "${ACL_ROOTS[@]}"; do [ -e "$r" ] && roots+=("$r"); done
+    if [ "${#roots[@]}" -gt 0 ]; then
+      while IFS=$'\t' read -r kind path; do
+        case "$path" in "$dir"|"$dir"/*) continue ;; esac  # se borra entera
+        if [ "$kind" = "d" ]; then defaults+="$path"$'\n'; else files+="$path"$'\n'; fi
+      done < <(getfacl -R -s -p "${roots[@]}" 2>/dev/null | awk -v u="$user" '
+        /^# file: / { file = substr($0, 9); next }
+        $0 ~ "^user:" u ":"         { print "a\t" file }
+        $0 ~ "^default:user:" u ":" { print "d\t" file }')
+    fi
+    total=$(printf '%s%s' "$files" "$defaults" | grep -c . || true)
+    [ "$total" -gt 0 ] && { lines+=("$total permisos de lectura (ACL) de $user"); found=1; }
   fi
-  total=$(( ${#acl_files[@]} + ${#acl_default[@]} ))
-  [ "$total" -gt 0 ] && { echo "- $total permisos de lectura (ACL) del agente"; found=1; }
-fi
+  ACL_FILES[$user]="$files"
+  ACL_DEFAULTS[$user]="$defaults"
+  FOUND[$user]=$found
 
-if [ "$found" -eq 0 ]; then
+  if [ "$found" -eq 1 ]; then
+    found_any=1
+    echo
+    echo "$label:"
+    for l in "${lines[@]}"; do echo "- $l"; done
+    if have fail2ban-client && fail2ban-client status "$jail" >/dev/null 2>&1; then
+      banned=$(fail2ban-client status "$jail" 2>/dev/null | sed -n 's/.*Banned IP list:[[:space:]]*//p')
+      [ -n "$banned" ] && echo "  IPs bloqueadas desde el panel que quedaran desbloqueadas: $banned"
+    fi
+  fi
+done
+
+if [ "$found_any" -eq 0 ]; then
+  echo
   echo "No hay nada del agente instalado en este host."
-  [ -f "$SELF" ] && [ "$DRY_RUN" -eq 0 ] && rm -f "$SELF"
+  if [ "$DRY_RUN" -eq 0 ]; then
+    for entry in "${INSTALLS[@]}"; do
+      IFS='|' read -r _ _ _ _ _ _ _ self <<<"$entry"
+      [ -f "$self" ] && rm -f "$self"
+    done
+  fi
   exit 0
 fi
 
@@ -1412,74 +1444,86 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
   read -r -p "Escribe QUITAR para desinstalar el agente: " answer
   [ "$answer" = "QUITAR" ] || { echo "Cancelado."; exit 1; }
 fi
-echo
 
-echo "1/6 Servicio"
-if have systemctl && [ -f "/etc/systemd/system/$SERVICE.service" ]; then
-  run systemctl disable --now "$SERVICE"
-  run rm -f "/etc/systemd/system/$SERVICE.service"
-  run systemctl daemon-reload
-else
-  echo "  (no esta)"
-fi
+restart_f2b=0
+for entry in "${INSTALLS[@]}"; do
+  IFS='|' read -r label dir service user sudoers jail f2blog self <<<"$entry"
+  [ "${FOUND[$user]}" -eq 1 ] || continue
+  echo
+  echo "== $label"
 
-echo "2/6 Jail proxsecure de fail2ban"
-if [ -f /etc/fail2ban/jail.d/proxsecure.conf ] || [ -f /etc/fail2ban/filter.d/proxsecure.conf ]; then
-  run rm -f /etc/fail2ban/jail.d/proxsecure.conf /etc/fail2ban/filter.d/proxsecure.conf /var/log/prox-secure-fail2ban.log
-  # Reiniciar saca el jail y sus bloqueos; el resto de los jails sigue igual.
-  if have systemctl && systemctl is-active --quiet fail2ban; then
-    run systemctl restart fail2ban
+  echo "1/6 Servicio"
+  if [ -f "/etc/systemd/system/$service.service" ]; then
+    have systemctl && run systemctl disable --now "$service"
+    run rm -f "/etc/systemd/system/$service.service"
+    have systemctl && run systemctl daemon-reload
+  else
+    echo "  (no esta)"
   fi
-else
-  echo "  (no esta)"
-fi
 
-echo "3/6 Permisos de lectura (ACL)"
-if [ "${#acl_files[@]}" -eq 0 ] && [ "${#acl_default[@]}" -eq 0 ]; then
-  echo "  (ninguno)"
-fi
-for p in "${acl_files[@]}"; do run setfacl -x "u:$AGENT_USER" "$p"; done
-for p in "${acl_default[@]}"; do run setfacl -x "d:u:$AGENT_USER" "$p"; done
+  echo "2/6 Jail $jail de fail2ban"
+  if [ -f "/etc/fail2ban/jail.d/$jail.conf" ] || [ -f "/etc/fail2ban/filter.d/$jail.conf" ]; then
+    run rm -f "/etc/fail2ban/jail.d/$jail.conf" "/etc/fail2ban/filter.d/$jail.conf" "$f2blog"
+    restart_f2b=1
+  else
+    echo "  (no esta)"
+  fi
 
-echo "4/6 Sudoers"
-if [ -f /etc/sudoers.d/prox-secure-agent ]; then
-  run rm -f /etc/sudoers.d/prox-secure-agent
-else
-  echo "  (no esta)"
-fi
+  echo "3/6 Permisos de lectura (ACL)"
+  [ -z "${ACL_FILES[$user]}${ACL_DEFAULTS[$user]}" ] && echo "  (ninguno)"
+  while IFS= read -r p; do [ -n "$p" ] && run setfacl -x "u:$user" "$p"; done <<<"${ACL_FILES[$user]}"
+  while IFS= read -r p; do [ -n "$p" ] && run setfacl -x "d:u:$user" "$p"; done <<<"${ACL_DEFAULTS[$user]}"
 
-echo "5/6 Usuario $AGENT_USER"
-if id -u "$AGENT_USER" >/dev/null 2>&1; then
-  # Por si quedo algun proceso suyo (el servicio ya se detuvo).
-  have pkill && run pkill -u "$AGENT_USER"
-  run userdel "$AGENT_USER"
-  getent group "$AGENT_USER" >/dev/null 2>&1 && run groupdel "$AGENT_USER"
-else
-  echo "  (no esta)"
-fi
+  echo "4/6 Sudoers"
+  if [ -f "$sudoers" ]; then
+    run rm -f "$sudoers"
+  else
+    echo "  (no esta)"
+  fi
 
-echo "6/6 Archivos del agente"
-if [ -d "$INSTALL_DIR" ]; then
-  run rm -rf "$INSTALL_DIR"
-else
-  echo "  (no estan)"
+  echo "5/6 Usuario $user"
+  if id -u "$user" >/dev/null 2>&1; then
+    # Por si quedo algun proceso suyo (el servicio ya se detuvo).
+    have pkill && run pkill -u "$user"
+    run userdel "$user"
+    getent group "$user" >/dev/null 2>&1 && run groupdel "$user"
+  else
+    echo "  (no esta)"
+  fi
+
+  echo "6/6 Archivos del agente"
+  if [ -d "$dir" ]; then
+    run rm -rf "$dir"
+  else
+    echo "  (no estan)"
+  fi
+done
+
+# Reiniciar fail2ban saca los jails borrados y sus bloqueos; el resto de
+# los jails sigue igual.
+if [ "$restart_f2b" -eq 1 ] && have systemctl && systemctl is-active --quiet fail2ban; then
+  echo
+  run systemctl restart fail2ban
 fi
 
 echo
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "Simulacion terminada: no se cambio nada."
 else
-  [ -f "$SELF" ] && rm -f "$SELF"
+  for entry in "${INSTALLS[@]}"; do
+    IFS='|' read -r _ _ _ _ _ _ _ self <<<"$entry"
+    [ -f "$self" ] && rm -f "$self"
+  done
   echo "Agente quitado de $(hostname)."
   echo "Los paquetes (python3-venv, fail2ban, acl, sudo) quedan instalados."
   echo "Para borrar tambien el host y su historial del panel: Monitoreo > el host > Eliminar (pide MFA)."
 fi
-PROXSECURE_EMBED_13_EOF
-chmod 755 "/usr/local/sbin/prox-secure-uninstall"
+SHINJISOC_EMBED_13_EOF
+chmod 755 "/usr/local/sbin/shinji-soc-uninstall"
 
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
 mkdir -p "$(dirname "$INSTALL_DIR/config.yaml")"
-cat > "$INSTALL_DIR/config.yaml" <<'PROXSECURE_EMBED_14_EOF'
+cat > "$INSTALL_DIR/config.yaml" <<'SHINJISOC_EMBED_14_EOF'
 # Copiar a config.yaml y completar con los datos reales del host.
 server_url: "http://TU_SERVIDOR:8000"
 api_key: "LA_API_KEY_DEL_HOST"
@@ -1510,9 +1554,9 @@ discovery_interval_seconds: 86400
 command_poll_interval_seconds: 10
 
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
-# agent/fail2ban/jail.d/proxsecure.conf).
-fail2ban_jail: proxsecure
-PROXSECURE_EMBED_14_EOF
+# agent/fail2ban/jail.d/shinjisoc.conf).
+fail2ban_jail: shinjisoc
+SHINJISOC_EMBED_14_EOF
 
   echo "Creado $INSTALL_DIR/config.yaml con valores de ejemplo."
   echo "Editalo para activar log_paths/service_users a mano si el autodescubrimiento no alcanza."
@@ -1522,106 +1566,106 @@ python3 -m venv "$INSTALL_DIR/.venv"
 "$INSTALL_DIR/.venv/bin/pip" install --no-cache-dir -r "$INSTALL_DIR/requirements.txt"
 
 cat > "$INSTALL_DIR/.env" <<EOF
-PROX_SECURE_SERVER_URL=${SERVER_URL}
-PROX_SECURE_API_KEY=${API_KEY}
+SHINJI_SOC_SERVER_URL=${SERVER_URL}
+SHINJI_SOC_API_KEY=${API_KEY}
 EOF
 if [ -n "$CA_FILE" ]; then
   if [ "$(realpath "$CA_FILE")" != "$INSTALL_DIR/ca.crt" ]; then
     cp "$CA_FILE" "$INSTALL_DIR/ca.crt"
   fi
-  echo "PROX_SECURE_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
+  echo "SHINJI_SOC_CA_FILE=$INSTALL_DIR/ca.crt" >> "$INSTALL_DIR/.env"
   echo "Usando la CA de $CA_FILE para verificar el HTTPS del servidor."
 fi
 chmod 600 "$INSTALL_DIR/.env"
 
-chown -R prox-secure:prox-secure "$INSTALL_DIR"
+chown -R shinji-soc:shinji-soc "$INSTALL_DIR"
 
 # fail2ban: jail dedicado para bloqueos manuales via panel
-mkdir -p "$(dirname "/etc/fail2ban/filter.d/proxsecure.conf")"
-cat > "/etc/fail2ban/filter.d/proxsecure.conf" <<'PROXSECURE_EMBED_15_EOF'
+mkdir -p "$(dirname "/etc/fail2ban/filter.d/shinjisoc.conf")"
+cat > "/etc/fail2ban/filter.d/shinjisoc.conf" <<'SHINJISOC_EMBED_15_EOF'
 [Definition]
-# Este filtro nunca matchea nada a proposito: el jail "proxsecure" solo se
+# Este filtro nunca matchea nada a proposito: el jail "shinjisoc" solo se
 # usa para bloqueos MANUALES disparados desde el panel
-# (fail2ban-client set proxsecure banip/unbanip <ip>), no para deteccion
+# (fail2ban-client set shinjisoc banip/unbanip <ip>), no para deteccion
 # automatica via fail2ban mismo (eso lo hace el motor IDS del servidor).
 # fail2ban exige <HOST> en todo failregex: sin el rechaza la configuracion
 # ("No failure-id group") y no arranca ningun jail, ni el sshd de Debian.
 # El archivo que lee el jail esta siempre vacio, asi que nunca coincide.
-failregex = ^PROXSECURE_NUNCA_MATCHEA_ESTO <HOST>$
+failregex = ^SHINJISOC_NUNCA_MATCHEA_ESTO <HOST>$
 ignoreregex =
-PROXSECURE_EMBED_15_EOF
+SHINJISOC_EMBED_15_EOF
 
-mkdir -p "$(dirname "/etc/fail2ban/jail.d/proxsecure.conf")"
-cat > "/etc/fail2ban/jail.d/proxsecure.conf" <<'PROXSECURE_EMBED_16_EOF'
+mkdir -p "$(dirname "/etc/fail2ban/jail.d/shinjisoc.conf")"
+cat > "/etc/fail2ban/jail.d/shinjisoc.conf" <<'SHINJISOC_EMBED_16_EOF'
 # logpath: archivo propio y vacio (lo crea install.sh). El filtro nunca
 # matchea: este jail solo recibe bloqueos manuales desde el panel.
-[proxsecure]
+[shinjisoc]
 enabled = true
-filter = proxsecure
-logpath = /var/log/prox-secure-fail2ban.log
+filter = shinjisoc
+logpath = /var/log/shinji-soc-fail2ban.log
 backend = polling
 maxretry = 999999
 findtime = 86400
 bantime = 3600
 action = %(action_)s
-PROXSECURE_EMBED_16_EOF
+SHINJISOC_EMBED_16_EOF
 
 # El jail no lee logs (solo recibe bloqueos manuales), pero fail2ban exige
 # que el logpath exista. Antes era /var/log/auth.log, que no existe en
 # Proxmox VE 8+ (sin rsyslog): el jail no arrancaba y bloquear no hacia nada.
-touch /var/log/prox-secure-fail2ban.log
+touch /var/log/shinji-soc-fail2ban.log
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 # Sin esto un error de configuracion pasaba en silencio: fail2ban arranca,
 # falla al cargar los jails y se cierra, y "Bloquear IP" no hace nada.
 sleep 2
-if systemctl is-active --quiet fail2ban && fail2ban-client status proxsecure >/dev/null 2>&1; then
-  echo "fail2ban activo con el jail proxsecure (bloqueos desde el panel)."
+if systemctl is-active --quiet fail2ban && fail2ban-client status shinjisoc >/dev/null 2>&1; then
+  echo "fail2ban activo con el jail shinjisoc (bloqueos desde el panel)."
 else
   echo "AVISO: fail2ban no quedo activo, los bloqueos de IP desde el panel no van a funcionar." >&2
   echo "       Revisa: fail2ban-client -t; tail -n 30 /var/log/fail2ban.log" >&2
 fi
 
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
-mkdir -p "$(dirname "/etc/sudoers.d/prox-secure-agent")"
-cat > "/etc/sudoers.d/prox-secure-agent" <<'PROXSECURE_EMBED_17_EOF'
+mkdir -p "$(dirname "/etc/sudoers.d/shinji-soc-agent")"
+cat > "/etc/sudoers.d/shinji-soc-agent" <<'SHINJISOC_EMBED_17_EOF'
 
-Cmnd_Alias PROXSECURE_CMDS = /usr/bin/fail2ban-client set * banip *, \
+Cmnd_Alias SHINJISOC_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /usr/bin/fail2ban-client set * unbanip *, \
-                              /opt/prox-secure-agent/kill_process.sh *, \
-                              /opt/prox-secure-agent/grant_log_access.sh *
+                              /opt/shinji-soc-agent/kill_process.sh *, \
+                              /opt/shinji-soc-agent/grant_log_access.sh *
 
-prox-secure ALL=(root) NOPASSWD: PROXSECURE_CMDS
-PROXSECURE_EMBED_17_EOF
-chmod 440 "/etc/sudoers.d/prox-secure-agent"
+shinji-soc ALL=(root) NOPASSWD: SHINJISOC_CMDS
+SHINJISOC_EMBED_17_EOF
+chmod 440 "/etc/sudoers.d/shinji-soc-agent"
 
-visudo -c -f /etc/sudoers.d/prox-secure-agent
-mkdir -p "$(dirname "/etc/systemd/system/prox-secure-agent.service")"
-cat > "/etc/systemd/system/prox-secure-agent.service" <<'PROXSECURE_EMBED_18_EOF'
+visudo -c -f /etc/sudoers.d/shinji-soc-agent
+mkdir -p "$(dirname "/etc/systemd/system/shinji-soc-agent.service")"
+cat > "/etc/systemd/system/shinji-soc-agent.service" <<'SHINJISOC_EMBED_18_EOF'
 [Unit]
-Description=Prox Secure - agente de monitoreo
+Description=Shinji SOC - agente de monitoreo
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/prox-secure-agent
-EnvironmentFile=-/opt/prox-secure-agent/.env
-ExecStart=/opt/prox-secure-agent/.venv/bin/python /opt/prox-secure-agent/main.py
+WorkingDirectory=/opt/shinji-soc-agent
+EnvironmentFile=-/opt/shinji-soc-agent/.env
+ExecStart=/opt/shinji-soc-agent/.venv/bin/python /opt/shinji-soc-agent/main.py
 Restart=on-failure
 RestartSec=5
-User=prox-secure
-Group=prox-secure
+User=shinji-soc
+Group=shinji-soc
 
 [Install]
 WantedBy=multi-user.target
-PROXSECURE_EMBED_18_EOF
+SHINJISOC_EMBED_18_EOF
 
 systemctl daemon-reload
-systemctl enable prox-secure-agent
+systemctl enable shinji-soc-agent
 # restart (no start): si install.sh se re-corre sobre un agente que ya
 # estaba activo, "start" no hace nada y el proceso se queda sin el grupo
 # "adm" recien agregado hasta el proximo reinicio manual.
-systemctl restart prox-secure-agent
+systemctl restart shinji-soc-agent
 
-echo "Agente instalado y corriendo. Ver logs: journalctl -u prox-secure-agent -f"
+echo "Agente instalado y corriendo. Ver logs: journalctl -u shinji-soc-agent -f"

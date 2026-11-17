@@ -47,7 +47,7 @@ from app.services import geoip
 
 HOST_NAME = "Simulacion de ataques"
 API = "http://127.0.0.1:8000/api/v1"
-PID_FILE = Path("/tmp/prox-secure-attack-sim.pid")
+PID_FILE = Path("/tmp/shinji-soc-attack-sim.pid")
 HOME_COUNTRY = "Chile"  # el host ficticio se ubica aca, para que los arcos tengan destino
 
 SCAN_PATHS = ["/.env", "/wp-login.php", "/.git/config", "/phpmyadmin/", "/xmlrpc.php", "/admin/config.php",
