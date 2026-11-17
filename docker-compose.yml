@@ -47,7 +47,10 @@ services:
     environment:
       # El .env montado (abajo) lo reescribe la pagina de Configuracion.
       SHINJI_SOC_ENV_FILE: /config/.env
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-shinjisoc}:${POSTGRES_PASSWORD:-shinjisoc}@db:5432/${POSTGRES_DB:-shinjisoc}
+      # La URL de la base la arma el servidor con POSTGRES_USER, _PASSWORD y
+      # _DB del .env, escapando la contrasena (una con "@" o "/" rompia la
+      # URL armada aca).
+      POSTGRES_HOST: db
       OLLAMA_HOST: http://ollama:11434
     depends_on:
       db:

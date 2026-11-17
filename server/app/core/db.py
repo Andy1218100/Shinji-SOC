@@ -7,7 +7,7 @@ from app.core.config import settings
 # pool_pre_ping: verifica la conexion antes de usarla. Sin esto, despues de
 # reiniciar la base (actualizacion, recrear el contenedor) los primeros
 # pedidos fallaban con conexiones ya cerradas.
-engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+engine = create_async_engine(settings.sqlalchemy_url, echo=False, pool_pre_ping=True)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 

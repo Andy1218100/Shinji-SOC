@@ -1,10 +1,33 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "postgresql+asyncpg://shinjisoc:shinjisoc@localhost:5432/shinjisoc"
+    # Base de datos. Lo normal es dar las partes (las mismas POSTGRES_* del
+    # .env que usa el contenedor de Postgres): la URL se arma escapando la
+    # contrasena, asi un "@", ":", "/" o "#" en ella no la rompe. Si se
+    # define DATABASE_URL, se usa tal cual.
+    database_url: str = ""
+    postgres_user: str = "shinjisoc"
+    postgres_password: str = "shinjisoc"
+    postgres_db: str = "shinjisoc"
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+
+    @property
+    def sqlalchemy_url(self) -> str:
+        if self.database_url:
+            return self.database_url
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        ).render_as_string(hide_password=False)
 
     ollama_host: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:3b"
