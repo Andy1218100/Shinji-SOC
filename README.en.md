@@ -2,7 +2,7 @@
 
 **Self-hosted monitoring and security operations center (SOC) for your own servers, with a local AI.**
 
-[Español](README.md) · [Installation (Spanish)](docs/INSTALACION.md) · [MFA guide (Spanish)](docs/MFA.md) · [Technical reference (Spanish)](docs/REFERENCIA.md)
+[Español](README.md) · [Installation (Spanish)](docs/INSTALACION.md) · [Agent guide (Spanish)](docs/AGENTE.md) · [MFA guide (Spanish)](docs/MFA.md) · [Technical reference (Spanish)](docs/REFERENCIA.md)
 
 Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel that runs on your own infrastructure. A lightweight agent on each server sends metrics, access logs, logins and the package inventory. The server detects attacks, looks for vulnerabilities and uses an AI that runs on the same machine to explain what happened and what to do. No data leaves your network unless you choose so.
 
@@ -37,6 +37,24 @@ docker compose logs server | grep "Codigo de instalacion"
 ```
 
 Open `https://localhost` (or `http://localhost:8000`), enter the installation code, create the super admin account and enable MFA with your phone. Then add your servers from **Monitoreo > + Nuevo host**: the panel shows the exact command to run `agent/install.sh` on each server.
+
+### Agent: install and uninstall
+
+On each Linux server you want to monitor, as root (the panel shows the API key once, when you create the host):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/install.sh -o /tmp/install.sh
+sudo bash /tmp/install.sh https://YOUR_PANEL THE_API_KEY [/tmp/shinji-soc-ca.crt]
+```
+
+The third argument is the root certificate of Caddy's internal CA, needed only when the panel uses `PANEL_TLS=tls internal`. To remove the agent and everything it installed (service, user, sudoers, fail2ban jail, read permissions granted from the panel):
+
+```bash
+sudo shinji-soc-uninstall --dry-run   # shows what it would do
+sudo shinji-soc-uninstall             # asks you to type QUITAR
+```
+
+Then delete the host from the panel (**Monitoreo** > the host > **Eliminar**). Details in the [agent guide](docs/AGENTE.md) (Spanish).
 
 The full step-by-step guide (HTTPS for a local network or a public domain, agents, backups, troubleshooting) is in the [installation manual](docs/INSTALACION.md), in Spanish.
 

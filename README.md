@@ -2,7 +2,7 @@
 
 **Monitoreo y centro de operaciones de seguridad (SOC) autoalojado para tus propios servidores, con IA local.**
 
-[English](README.en.md) · [Instalación](docs/INSTALACION.md) · [Manual de MFA](docs/MFA.md) · [Referencia técnica](docs/REFERENCIA.md)
+[English](README.en.md) · [Instalación](docs/INSTALACION.md) · [Agente](docs/AGENTE.md) · [Manual de MFA](docs/MFA.md) · [Referencia técnica](docs/REFERENCIA.md)
 
 Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel web que corre en tu propia infraestructura. Un agente liviano en cada servidor manda métricas, logs de acceso, inicios de sesión e inventario de paquetes. El servidor detecta ataques, busca vulnerabilidades y usa una IA que corre en el mismo equipo para explicar qué pasó y qué hacer. Ningún dato sale de tu red salvo que lo decidas.
 
@@ -38,11 +38,30 @@ Abre `https://localhost` (o `http://localhost:8000`), escribe el código de inst
 
 El paso a paso completo, con HTTPS para la red local o un dominio, los agentes y la solución de problemas, está en el [manual de instalación](docs/INSTALACION.md).
 
+### Agente: instalar y desinstalar
+
+En cada servidor Linux que quieres vigilar, como root (la API key la muestra el panel una sola vez, al crear el servidor):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/agent/install.sh -o /tmp/install.sh
+sudo bash /tmp/install.sh https://TU_PANEL LA_API_KEY [/tmp/shinji-soc-ca.crt]
+```
+
+El tercer argumento es el certificado raíz de la CA de Caddy y solo hace falta si el panel usa `PANEL_TLS=tls internal`. Para quitar el agente y todo lo que instaló (servicio, usuario, sudoers, jail de fail2ban y los permisos de lectura dados desde el panel):
+
+```bash
+sudo shinji-soc-uninstall --dry-run   # muestra lo que haría
+sudo shinji-soc-uninstall             # pide escribir QUITAR
+```
+
+Después borra el servidor del panel (**Monitoreo** > el servidor > **Eliminar**). Todo el detalle está en la [guía del agente](docs/AGENTE.md).
+
 ## Documentación
 
 | Documento | Para qué |
 |---|---|
 | [Manual de instalación](docs/INSTALACION.md) | Instalar el servidor, configurar HTTPS, agregar servidores, respaldar, actualizar y desinstalar. |
+| [Guía del agente](docs/AGENTE.md) | Instalar y desinstalar el agente en cada servidor que quieres vigilar, qué datos manda y cómo resolver problemas de conexión. |
 | [Manual de MFA](docs/MFA.md) | Para cada persona que usa el panel: primer ingreso, códigos de respaldo, cambio de teléfono. |
 | [Referencia técnica](docs/REFERENCIA.md) | Cómo funciona cada parte, la API, la auditoría con Claude Code, desarrollo y limitaciones. |
 

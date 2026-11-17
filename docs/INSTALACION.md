@@ -204,6 +204,8 @@ docker compose up -d caddy
 
 ## 6. Agregar servidores (agentes)
 
+> Esta sección es el resumen. La [guía del agente](AGENTE.md) tiene todo el detalle: instalar desde GitHub, qué datos manda, reinstalar, cambiar la dirección del panel, desinstalar y problemas frecuentes.
+
 **1. Crea el servidor en el panel.** En **Monitoreo**, botón **+ Nuevo host** (rol admin). Indica un nombre, el hostname y, si tiene, su IP pública (sirve para dibujar en el mapa los arcos de los ataques hacia ese servidor).
 
 Al crearlo, el panel muestra **una sola vez** el comando de instalación, con la dirección del servidor y la API key del nuevo host. Si la pierdes, hay que crear el host de nuevo.
@@ -327,7 +329,7 @@ Las imágenes de Ollama, TimescaleDB y Caddy tienen versión fija en `docker-com
 
 ## 11. Quitar un servidor o desinstalar todo
 
-**Quitar el agente de un servidor.** En ese servidor, como root, primero en modo simulación:
+**Quitar el agente de un servidor** (detalle en la [guía del agente](AGENTE.md#desinstalar)). En ese servidor, como root, primero en modo simulación:
 
 ```bash
 shinji-soc-uninstall --dry-run
@@ -364,7 +366,7 @@ docker compose down -v
 **El agente no se conecta ("certificate verify failed", "internal error").**
 - Con HTTPS de red local, el agente necesita el certificado de la CA (tercer argumento del instalador).
 - Si el agente se conecta por IP, esa IP tiene que estar en `PANEL_ADDRESS` y en `PANEL_DEFAULT_SNI`.
-- Comprueba que el servidor vigilado llegue al puerto 443: `curl -I https://IP_DEL_SERVIDOR --cacert /tmp/shinji-soc-ca.crt`.
+- Comprueba que el servidor vigilado llegue al panel: `curl -s -o /dev/null -w "%{http_code}\n" --cacert /tmp/shinji-soc-ca.crt https://IP_DEL_PANEL/login` tiene que mostrar `200`.
 
 **"ports are not available" al levantar un contenedor.** Otro programa usa ese puerto, o Docker Desktop todavía no liberó el del contenedor anterior. Vuelve a correr el comando; si persiste, busca qué usa el puerto (`netstat -ano | findstr :443` en Windows).
 
