@@ -59,11 +59,11 @@ El instalador agrega solo lo que falte: `python3`, `python3-venv`, `python3-pip`
 **1. Descarga el código**
 
 ```bash
-git clone https://github.com/Andy1218100/shinji-soc.git
+git clone https://github.com/Andy1218100/Shinji-SOC.git
 ```
 
 ```bash
-cd shinji-soc
+cd Shinji-SOC
 ```
 
 **2. Crea el archivo de configuración**

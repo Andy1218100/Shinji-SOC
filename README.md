@@ -26,8 +26,8 @@ Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel w
 ## Inicio rápido
 
 ```bash
-git clone https://github.com/Andy1218100/shinji-soc.git
-cd shinji-soc
+git clone https://github.com/Andy1218100/Shinji-SOC.git
+cd Shinji-SOC
 cp .env.example .env    # cambia POSTGRES_PASSWORD y SESSION_SECRET_KEY
 docker compose up -d --build
 docker compose exec ollama ollama pull qwen2.5:3b

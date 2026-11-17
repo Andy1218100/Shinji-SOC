@@ -141,7 +141,7 @@ Al guardar una corrección, los alias vuelven a ser el nombre y la IP reales.
 2. Registra el servidor MCP en Claude Code (lee el token del `.env` del proyecto):
 
    ```bash
-   claude mcp add --scope user shinji-soc-audit -- python "/ruta/a/shinji-soc/tools/mcp_audit/server.py"
+   claude mcp add --scope user shinji-soc-audit -- python "/ruta/a/Shinji-SOC/tools/mcp_audit/server.py"
    ```
 
    Si el panel no está en `http://localhost:8000`, define `SHINJI_SOC_URL`.
