@@ -93,6 +93,8 @@ Para generar valores al azar:
 openssl rand -hex 32
 ```
 
+> **Elige la contraseña de la base antes del primer arranque.** Postgres la lee una sola vez, cuando crea la base; cambiarla después en el `.env` no la cambia en la base (ver [Cambié la contraseña de la base de datos](#cambié-la-contraseña-de-la-base-de-datos-en-el-env)). No uses `$` en ella: Docker Compose lo interpreta como una variable.
+
 Todo lo demás se puede dejar como está y ajustar después desde el panel, en **Configuración**.
 
 > **Importante:** el `.env` contiene contraseñas y claves. No lo subas a ningún repositorio (ya está en `.gitignore`).
@@ -340,6 +342,50 @@ En Cloudflare, borra el túnel desde **Networking > Tunnels**.
 **Los agentes reciben 403 desde Cloudflare.** Si la respuesta es una página de Cloudflare (no del panel), alguna regla de seguridad de Cloudflare está bloqueando a clientes que no son navegadores (Access, reglas del WAF o protección contra bots). Exceptúa las rutas `/api/v1/` para el dominio del panel.
 
 **Los eventos de Seguridad no aparecen en vivo.** La página igual se recarga sola cada 30 segundos.
+
+### Cambié la contraseña de la base de datos en el `.env`
+
+Postgres solo lee `POSTGRES_PASSWORD` la primera vez, cuando crea la base vacía; desde ahí la contraseña queda guardada en la propia base. Si la cambias después en el `.env`, el servidor manda la nueva, la base sigue esperando la anterior, y el log del servidor muestra `password authentication failed`. Hay dos formas de resolverlo:
+
+**A. Instalación nueva, sin datos que conservar.** Borra solo el volumen de la base, para que se cree de nuevo con la contraseña nueva (el modelo de IA no se toca):
+
+```bash
+docker compose down
+```
+
+```bash
+docker volume ls | grep db_data
+```
+
+Borra el volumen con el nombre que aparezca (por ejemplo `shinji-soc_db_data`). Esto borra la base y no se puede deshacer:
+
+```bash
+docker volume rm shinji-soc_db_data
+```
+
+```bash
+docker compose up -d
+```
+
+La base queda vacía, así que el servidor vuelve a mostrar el código de instalación para crear la cuenta super admin.
+
+**B. Ya tienes datos y quieres conservarlos.** Cambia la contraseña dentro de Postgres para que coincida con la del `.env`. Abre la consola de la base (desde adentro del contenedor no pide contraseña):
+
+```bash
+docker compose exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+```
+
+Dentro de `psql`, escribe `\password shinjisoc` (o el usuario de tu `.env`; si también lo cambiaste, el usuario original). Pide la contraseña nueva dos veces y no queda en el historial de la terminal; escribe la misma del `.env` y sal con `\q`. Después aplica el `.env` a los contenedores:
+
+```bash
+docker compose up -d
+```
+
+En los dos casos, comprueba con `docker compose logs server | tail -5`: no tiene que aparecer `password authentication failed` ni "No se pudo conectar a la base de datos".
+
+### Otros problemas
+
+**El servidor no arranca: "Name or service not known" al conectar a la base.** Pasaba en versiones anteriores cuando la contraseña de la base tenía un `@`. Actualiza (`git pull` y `docker compose up -d --build`).
 
 **No puedo iniciar sesión: "Cuenta bloqueada temporalmente".** Después de 5 intentos fallidos (contraseña o código), la cuenta se bloquea 5 minutos.
 
