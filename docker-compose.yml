@@ -12,7 +12,8 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Solo desde este equipo: la base no tiene por que verse en la red.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proxsecure}"]
       interval: 5s
@@ -35,7 +36,8 @@ services:
     volumes:
       - ollama_data:/root/.ollama
     ports:
-      - "11434:11434"
+      # Solo desde este equipo: la API de Ollama no pide autenticacion.
+      - "127.0.0.1:11434:11434"
 
   server:
     build: ./server
@@ -58,8 +60,12 @@ services:
       # accesible solo desde este equipo.
       - "${SERVER_BIND:-0.0.0.0}:8000:8000"
     volumes:
-      - ./server:/app
+      # El codigo va dentro de la imagen (modo produccion). Para desarrollo,
+      # con el codigo montado y recarga al editar: docker-compose.dev.yml.
       - ./.env:/config/.env
+      # Base GeoIP: la descarga Configuracion > Mapa de ataques o
+      # scripts/update_geoip_db.sh, y sobrevive a reconstruir la imagen.
+      - ./server/data:/app/data
       # Lectura del estado de los respaldos y pedido de "Respaldar ahora".
       - ./backups:/backups
 

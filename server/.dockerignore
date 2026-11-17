@@ -1,0 +1,5 @@
+# La base GeoIP se monta como volumen (docker-compose.yml); no va en la imagen.
+data/
+__pycache__/
+*.pyc
+.venv/

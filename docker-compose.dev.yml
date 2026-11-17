@@ -1,0 +1,13 @@
+# Modo desarrollo: el codigo de server/ montado en el contenedor y recarga
+# automatica al editar un .py o una plantilla .html.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Para no escribir los dos -f cada vez, copia este contenido a
+# docker-compose.override.yml (no se versiona y Compose lo carga solo).
+services:
+  server:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000",
+              "--reload", "--reload-include", "*.html", "--timeout-graceful-shutdown", "10"]
+    volumes:
+      - ./server:/app
