@@ -2,7 +2,7 @@
 
 **Self-hosted monitoring and security operations center (SOC) for your own servers, with a local AI.**
 
-[Español](README.md) · [Installation (Spanish)](docs/INSTALACION.md) · [Agent guide (Spanish)](docs/AGENTE.md) · [MFA guide (Spanish)](docs/MFA.md) · [Technical reference (Spanish)](docs/REFERENCIA.md)
+[Español](README.md) · [Installation (Spanish)](docs/INSTALACION.md) · [Agent guide (Spanish)](docs/AGENTE.md) · [MCP with Claude (Spanish)](docs/MCP.md) · [MFA guide (Spanish)](docs/MFA.md) · [Technical reference (Spanish)](docs/REFERENCIA.md)
 
 Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel that runs on your own infrastructure. A lightweight agent on each server sends metrics, access logs, logins and the package inventory. The server detects attacks, looks for vulnerabilities and uses an AI that runs on the same machine to explain what happened and what to do. No data leaves your network unless you choose so.
 
@@ -16,6 +16,7 @@ Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel t
 - **Attack map:** geolocated origin of each attack, using MaxMind's free GeoLite2 database.
 - **Vulnerabilities:** matches installed packages against [OSV.dev](https://osv.dev) and separates what has a fix from what doesn't.
 - **Local AI:** Ollama (`qwen2.5:3b`) explains events, alerts and vulnerabilities in plain language, with no GPU and no external service. Claude is optional.
+- **AI audit with Claude (MCP):** an MCP server lets Claude Code or Claude Desktop review and correct the local AI's text using your Claude plan (no Anthropic API key), with minimized data. See the [MCP guide](docs/MCP.md).
 - **Notifications:** Telegram, ntfy or email.
 - **Accounts with mandatory MFA:** super admin, admin and read-only roles; single-use recovery codes.
 - **Operations:** built-in HTTPS (Caddy), automatic backups, data retention and configuration from the panel itself.

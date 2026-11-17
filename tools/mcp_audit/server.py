@@ -7,6 +7,10 @@ necesita API key de Anthropic. Solo usa la biblioteca estandar de Python
 Configuracion (variables de entorno, o se leen del .env del proyecto):
   SHINJI_SOC_URL           URL del servidor (por defecto http://localhost:8000)
   SHINJI_SOC_AUDIT_TOKEN   el AUDIT_API_TOKEN del servidor
+  SHINJI_SOC_CA_FILE       opcional: certificado raiz de la CA interna de
+                           Caddy, si el panel usa HTTPS con "tls internal"
+                           y ese certificado no esta instalado en el equipo
+Guia completa: docs/MCP.md
 
 Registrar en Claude Code:
   claude mcp add --scope user shinji-soc-audit -- python "<ruta>/tools/mcp_audit/server.py"
@@ -14,6 +18,7 @@ Registrar en Claude Code:
 
 import json
 import os
+import ssl
 import sys
 import urllib.error
 import urllib.request
@@ -41,6 +46,12 @@ def _load_env_file() -> dict:
 _ENV = _load_env_file()
 BASE_URL = os.environ.get("SHINJI_SOC_URL", "http://localhost:8000").rstrip("/")
 TOKEN = os.environ.get("SHINJI_SOC_AUDIT_TOKEN") or _ENV.get("AUDIT_API_TOKEN", "")
+CA_FILE = os.environ.get("SHINJI_SOC_CA_FILE", "")
+if CA_FILE and not os.path.isfile(CA_FILE):
+    sys.exit(f"SHINJI_SOC_CA_FILE apunta a un archivo que no existe: {CA_FILE}")
+# Sin CA_FILE se usan los certificados del sistema (en Windows, el almacen
+# donde queda la CA de Caddy si se instalo con certutil).
+SSL_CONTEXT = ssl.create_default_context(cafile=CA_FILE) if CA_FILE else None
 
 AUDIT_GUIDE = """Tres tipos de informe (parametro "tipo" de obtener_informe). Para cada item: verdict "ok" si el texto de la IA local (un modelo de 3B) es correcto y util, o "fix" con "corrected_recommendation" (2-3 frases en espanol, solo con datos del item) si no.
 
@@ -130,7 +141,7 @@ def _http(method: str, path: str, body: dict | None = None) -> dict:
         headers={"X-Audit-Token": TOKEN, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:500]

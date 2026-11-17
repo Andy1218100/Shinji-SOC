@@ -289,7 +289,7 @@ Todo esto se hace desde **Configuración** (solo super admin); guardar pide tu c
 - **Mapa de ataques (GeoIP):** crea una cuenta gratuita en [MaxMind](https://www.maxmind.com/en/geolite2/signup), genera una License Key, guarda el Account ID y la License Key, y usa el botón **Descargar base GeoIP**. Sin esto, los ataques aparecen en la lista pero no en el mapa.
 - **Notificaciones:** Telegram, ntfy o correo (SMTP), con un botón de prueba. Por defecto solo avisan lo crítico y no incluyen la IP de origen.
 - **IA con Claude:** cambia el motor a Claude y pega una API key de Anthropic. Por defecto todo pasa por la IA local y no sale ningún dato del servidor.
-- **Auditoría de la IA local con Claude Code:** genera el token de auditoría y registra `tools/mcp_audit/server.py` como servidor MCP (ver la referencia técnica).
+- **Auditoría de la IA local con Claude:** genera el token de auditoría y registra `tools/mcp_audit/server.py` en Claude Code o Claude Desktop (ver la [guía del servidor MCP](MCP.md)).
 - **Limitar la CPU de la IA:** en una PC de escritorio, Ollama puede dejar todos los núcleos al 100 % durante un escaneo. Crea un `docker-compose.override.yml` (no se versiona; Compose lo carga solo) y corre `docker compose up -d ollama`:
 
   ```yaml

@@ -135,18 +135,9 @@ La caché de prompts en RAM de llama-server está desactivada (`LLAMA_ARG_CACHE_
 
 Al guardar una corrección, los alias vuelven a ser el nombre y la IP reales.
 
-**Activar:**
+**Activar:** el paso a paso para Claude Code y Claude Desktop (token, registro, certificado de la CA, uso y problemas frecuentes) está en la [guía del servidor MCP](MCP.md).
 
-1. Genera el token en **Configuración > Inteligencia artificial > Auditoría con Claude Code**.
-2. Registra el servidor MCP en Claude Code (lee el token del `.env` del proyecto):
-
-   ```bash
-   claude mcp add --scope user shinji-soc-audit -- python "/ruta/a/Shinji-SOC/tools/mcp_audit/server.py"
-   ```
-
-   Si el panel no está en `http://localhost:8000`, define `SHINJI_SOC_URL`.
-
-3. En Claude Code, pide por ejemplo "audita las recomendaciones de Shinji SOC con shinji-soc-audit". Cada lote consume parte del límite de tu suscripción.
+Variables que lee `server.py`: `SHINJI_SOC_URL` (por defecto `http://localhost:8000`), `SHINJI_SOC_AUDIT_TOKEN` (si no está, la toma de `AUDIT_API_TOKEN` en el `.env` de la carpeta del proyecto) y `SHINJI_SOC_CA_FILE` (opcional, certificado de la CA interna de Caddy).
 
 ## Configuración desde el panel
 

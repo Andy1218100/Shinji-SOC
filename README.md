@@ -2,7 +2,7 @@
 
 **Monitoreo y centro de operaciones de seguridad (SOC) autoalojado para tus propios servidores, con IA local.**
 
-[English](README.en.md) · [Instalación](docs/INSTALACION.md) · [Agente](docs/AGENTE.md) · [Manual de MFA](docs/MFA.md) · [Referencia técnica](docs/REFERENCIA.md)
+[English](README.en.md) · [Instalación](docs/INSTALACION.md) · [Agente](docs/AGENTE.md) · [MCP con Claude](docs/MCP.md) · [Manual de MFA](docs/MFA.md) · [Referencia técnica](docs/REFERENCIA.md)
 
 Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel web que corre en tu propia infraestructura. Un agente liviano en cada servidor manda métricas, logs de acceso, inicios de sesión e inventario de paquetes. El servidor detecta ataques, busca vulnerabilidades y usa una IA que corre en el mismo equipo para explicar qué pasó y qué hacer. Ningún dato sale de tu red salvo que lo decidas.
 
@@ -14,6 +14,7 @@ Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel w
 - **Mapa de ataques:** origen geolocalizado de cada ataque, con la base gratuita GeoLite2 de MaxMind.
 - **Vulnerabilidades:** cruza los paquetes instalados contra [OSV.dev](https://osv.dev) y separa lo que tiene parche de lo que no.
 - **IA local:** Ollama (`qwen2.5:3b`) explica eventos, alertas y vulnerabilidades en lenguaje simple, sin GPU ni servicios externos. Claude es opcional.
+- **Auditoría con Claude (MCP):** un servidor MCP permite que Claude Code o Claude Desktop revisen y corrijan los textos de la IA local con tu plan de Claude (sin API key de Anthropic) y con datos minimizados. Ver la [guía del servidor MCP](docs/MCP.md).
 - **Notificaciones:** Telegram, ntfy o correo.
 - **Cuentas con MFA obligatorio:** roles super admin, admin y solo lectura; códigos de respaldo de un solo uso.
 - **Operación:** HTTPS integrado (Caddy), respaldos automáticos, retención de datos y configuración desde el propio panel.
@@ -62,6 +63,7 @@ Después borra el servidor del panel (**Monitoreo** > el servidor > **Eliminar**
 |---|---|
 | [Manual de instalación](docs/INSTALACION.md) | Instalar el servidor, configurar HTTPS, agregar servidores, respaldar, actualizar y desinstalar. |
 | [Guía del agente](docs/AGENTE.md) | Instalar y desinstalar el agente en cada servidor que quieres vigilar, qué datos manda y cómo resolver problemas de conexión. |
+| [Servidor MCP con Claude](docs/MCP.md) | Conectar Claude Code o Claude Desktop para auditar y corregir los textos de la IA local, con datos minimizados. |
 | [Manual de MFA](docs/MFA.md) | Para cada persona que usa el panel: primer ingreso, códigos de respaldo, cambio de teléfono. |
 | [Referencia técnica](docs/REFERENCIA.md) | Cómo funciona cada parte, la API, la auditoría con Claude Code, desarrollo y limitaciones. |
 
