@@ -99,7 +99,7 @@ En el panel:
 | Jail de fail2ban para los bloqueos aprobados en el panel | `/etc/fail2ban/jail.d/shinjisoc.conf` |
 | Comando para desinstalarlo | `/usr/local/sbin/shinji-soc-uninstall` |
 
-El agente no corre como root. Con `sudo` solo puede hacer cuatro cosas: bloquear y desbloquear IPs en su jail de fail2ban, terminar un proceso y dar permiso de lectura a un log. Las dos últimas pasan por scripts propios que validan lo que reciben: `kill_process.sh` solo termina el proceso si su línea de comando sigue siendo la del evento (para no matar un PID reutilizado) y `grant_log_access.sh` solo acepta rutas bajo `/var/log`, `/opt`, `/srv` y `/home`.
+El agente no corre como root. Con `sudo` solo puede hacer cinco cosas: bloquear y desbloquear IPs en su jail de fail2ban, terminar un proceso, dar permiso de lectura a un log y listar las conexiones con `ss -tunapH` (ese comando exacto, que solo lee). Terminar un proceso y dar lectura pasan por scripts propios que validan lo que reciben: `kill_process.sh` solo termina el proceso si su línea de comando sigue siendo la del evento (para no matar un PID reutilizado) y `grant_log_access.sh` solo acepta rutas bajo `/var/log`, `/opt`, `/srv` y `/home`.
 
 ### Qué datos manda al panel
 
@@ -108,6 +108,7 @@ El agente no corre como root. Con `sudo` solo puede hacer cuatro cosas: bloquear
 - **Inicios de sesión** de SSH y de la web de Proxmox: cuándo, servicio, resultado, usuario e IP. Nunca las líneas del log.
 - **Procesos** de cuentas de servicio que lanzan programas sospechosos: usuario, PID y línea de comando.
 - **Inventario de paquetes** (`dpkg`), una vez al día.
+- **Conexiones:** los puertos en escucha y las conexiones TCP salientes a IPs públicas (dirección, puerto, cuenta y proceso), cada minuto si hay cambios. No captura paquetes ni contenido ([cómo se usa](REFERENCIA.md#conexiones-del-host)).
 - **Informe del sistema:** SO, hardware, servicios, puertos en escucha y logs encontrados, al arrancar y una vez al día.
 
 Todo va al panel por la dirección que le diste al instalar, autenticado con la API key de ese servidor. El agente no manda nada a ningún otro lado.

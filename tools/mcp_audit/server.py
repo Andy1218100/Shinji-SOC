@@ -65,6 +65,8 @@ eventos (resumen de un evento de seguridad):
 - Debe ser coherente con "hechos" y "tipo": no inventar ataques, IPs, usuarios ni archivos.
 - process_anomaly: juzgar con "senales_intrusion" / "senales_legitimo"; un proceso lanzado por systemd sin senales de intrusion no es un ataque. La accion es terminar el proceso, no bloquear una IP.
 - Fuerza bruta: muchos usuarios distintos o root sugieren ataque automatizado. Decir claramente si conviene la "accion_sugerida".
+- new_listener / service_outbound / malicious_connection: conexiones vistas por el agente. Un shell o interprete escuchando o saliendo es muy sospechoso; un servicio conocido en su puerto habitual suele ser legitimo. La accion es terminar el proceso, no bloquear una IP.
+- Si "ip_de_proxy" es true, la IP es de Cloudflare o de un tunel: no recomendar bloquearla.
 
 informes (lectura del informe del host):
 - Solo afirmar lo que esta en "hechos" (servicios, puertos, logs, cuentas): no inventar el tipo de servidor ni servicios. Senalar logs sin permiso o carpetas sin acceso si los hay.

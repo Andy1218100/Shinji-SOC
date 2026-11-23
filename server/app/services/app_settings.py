@@ -118,6 +118,13 @@ CATALOG: tuple[Field, ...] = (
     Field("SSH_WINDOW_SECONDS", "ssh_window_seconds", "Ventana de logins", "Deteccion de intrusos", "int",
           "Periodo en el que se cuentan los logins fallidos de una misma IP.", min=60, max=86400,
           unit="s", section="Logins (SSH y web de Proxmox)"),
+    Field("TRUSTED_PROXIES", "trusted_proxies", "Proxies y tuneles de confianza", "Deteccion de intrusos", "str",
+          "IPs o rangos (separados por coma) de tus proxies o tuneles: lo que llega desde ellos no es la IP del visitante. "
+          "Cloudflare se reconoce solo. Ej. 127.0.0.0/8, ::1, 172.18.0.0/16 (la red de Docker de un cloudflared en contenedor).",
+          optional=True, section="Red"),
+    Field("THREAT_INTEL_ENABLED", "threat_intel_enabled", "Listas de redes maliciosas", "Deteccion de intrusos", "bool",
+          "Marca las conexiones y ataques que vienen de redes conocidas de spam y cibercrimen (Spamhaus DROP, se descarga una vez al dia).",
+          applies="En la proxima descarga (una vez al dia)", section="Red"),
     Field("VULN_SCAN_INTERVAL_SECONDS", "vuln_scan_interval_seconds", "Escaneo de vulnerabilidades cada", "Escaneos y alertas", "int",
           "Cada cuanto se revisan todos los hosts (ademas de cada inventario nuevo).",
           min=3600, max=604800, applies="Desde el proximo ciclo", unit="s"),

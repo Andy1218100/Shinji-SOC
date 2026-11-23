@@ -18,7 +18,7 @@ from app.models.host import Host
 from app.core.db import SessionLocal
 from app.models.security import AuthAttempt, IngestedRequest, SecurityEvent
 from app.schemas.logs import AuthEventIn, LogEntryIn
-from app.services import ai, audit, geoip, notify
+from app.services import ai, audit, geoip, netlists, notify
 from app.services.event_bus import security_events_bus
 
 logger = logging.getLogger("ids")
@@ -37,6 +37,9 @@ KIND_LABELS = {
     "ssh_brute_force": "fuerza bruta por SSH",
     "pve_brute_force": "fuerza bruta en la web de Proxmox",
     "login_after_failures": "login exitoso despues de varios fallos",
+    "new_listener": "puerto nuevo en escucha",
+    "service_outbound": "conexion saliente de una cuenta de servicio",
+    "malicious_connection": "conexion a una red maliciosa conocida",
 }
 ACTION_LABELS = {"block_ip": "bloquear la IP", "kill_process": "terminar el proceso"}
 
@@ -131,6 +134,32 @@ def build_event_prompt(host: Host, kind: str, source_ip: str, detail: dict, sugg
             f"{detail.get('failures')} intentos fallidos en {window} segundos. Puede ser un atacante que adivino "
             "la contrasena o un usuario legitimo que se equivoco varias veces."
         )
+    elif kind == "new_listener":
+        facts = (
+            f"En el host '{host.name}' empezo a escuchar un puerto que antes no estaba abierto: "
+            f"{detail.get('proto')}/{detail.get('port')} en la direccion {_quoted(detail.get('address'), 64)}, "
+            f"del proceso {_quoted(detail.get('cmdline') or detail.get('process'))} de la cuenta "
+            f"{_quoted(detail.get('user'), 64)}. Puede ser un servicio instalado o reiniciado a proposito, o una "
+            "puerta trasera (bind shell) abierta por un intruso; un shell o un interprete escuchando un puerto es "
+            "muy sospechoso. Escuchar solo en 127.0.0.1 o ::1 lo deja accesible solo desde el propio host."
+        )
+    elif kind == "service_outbound":
+        facts = (
+            f"En el host '{host.name}', la cuenta de servicio {_quoted(detail.get('user'), 64)} abrio una conexion "
+            f"saliente a {source_ip}, puerto {detail.get('remote_port')}, desde el proceso "
+            f"{_quoted(detail.get('cmdline') or detail.get('process'))}. Las cuentas de servicio (como la de un "
+            "servidor web) rara vez inician conexiones a puertos poco comunes: es la forma tipica de una reverse "
+            "shell despues de explotar una web, aunque tambien puede ser una integracion legitima (una API, una "
+            "base de datos remota, una actualizacion)."
+        )
+    elif kind == "malicious_connection":
+        facts = (
+            f"El host '{host.name}' tiene una conexion saliente a {source_ip}, puerto {detail.get('remote_port')}, "
+            f"desde el proceso {_quoted(detail.get('cmdline') or detail.get('process'))} de la cuenta "
+            f"{_quoted(detail.get('user'), 64)}. Esa IP esta en una lista publica de redes maliciosas "
+            f"({_quoted(detail.get('lista_de_amenazas'), 80)}). Puede ser un equipo infectado que contacta a su "
+            "servidor de control, o un falso positivo si esa red cambio de dueno."
+        )
     elif kind == "brute_force":
         facts = (
             f"La IP {source_ip} hizo {detail.get('requests_in_window')} peticiones HTTP en {window} segundos al "
@@ -153,6 +182,12 @@ def build_event_prompt(host: Host, kind: str, source_ip: str, detail: dict, sugg
             f"del host '{host.name}' (el umbral es {settings.ids_404_threshold}), tipico de un escaner que "
             "prueba rutas, aunque tambien puede ser un enlace roto o una app mal configurada."
         )
+
+    if detail.get("detras_de_proxy") or detail.get("ip_de_proxy"):
+        facts += (f" La IP {source_ip} es la de un proxy o tunel (por ejemplo Cloudflare), no la del visitante: "
+                  "no se puede bloquear porque cortaria trafico legitimo.")
+    if detail.get("lista_de_amenazas") and kind != "malicious_connection":
+        facts += f" Esa IP esta en una lista publica de redes maliciosas ({_quoted(detail.get('lista_de_amenazas'), 80)})."
 
     action = {
         "block_ip": f"bloquear la IP {source_ip} con fail2ban",
@@ -191,6 +226,15 @@ async def create_event(
     severity: str = "warning",
     suggested_action: str | None = "block_ip",
 ) -> SecurityEvent:
+    detail = dict(detail)
+    # Bloquear la IP de Cloudflare o de un tunel no frena al atacante y corta
+    # trafico legitimo: el evento queda, sin la accion.
+    if suggested_action == "block_ip" and netlists.is_proxy(source_ip):
+        suggested_action = None
+        detail["ip_de_proxy"] = True
+    threat = netlists.threat_match(source_ip)
+    if threat:
+        detail["lista_de_amenazas"] = threat
     geo = geoip.lookup(source_ip)
     event = SecurityEvent(
         host_id=host.id,
@@ -239,12 +283,19 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=settings.ids_window_seconds)
 
+    countable: set[str] = set()
     for entry in entries:
+        # Detras de Cloudflare o de un tunel, la IP del log es la del proxy:
+        # se usa la reenviada si el log la trae. Si no, esa IP es la de todos
+        # los visitantes y contarla daria fuerza bruta falsa.
+        ip, unresolved = netlists.resolve_client(entry.ip, entry.forwarded_for)
+        if not unresolved:
+            countable.add(ip)
         session.add(
             IngestedRequest(
                 host_id=host.id,
                 ts=entry.ts or now,
-                ip=entry.ip,
+                ip=ip,
                 method=entry.method,
                 path=entry.path,
                 status_code=entry.status_code,
@@ -253,20 +304,16 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
         )
 
         if entry.path and is_suspicious_path(entry.path) and not await _open_event(
-            session, host.id, "path_scan", entry.ip
+            session, host.id, "path_scan", ip
         ):
-            await create_event(
-                session,
-                host,
-                "path_scan",
-                entry.ip,
-                {"path": entry.path, "method": entry.method, "user_agent": entry.user_agent},
-            )
+            detail = {"path": entry.path, "method": entry.method, "user_agent": entry.user_agent}
+            if unresolved:
+                detail["detras_de_proxy"] = True
+            await create_event(session, host, "path_scan", ip, detail)
 
     await session.commit()
 
-    ips = {e.ip for e in entries}
-    for ip in ips:
+    for ip in countable:
         total = (
             await session.execute(
                 select(func.count(IngestedRequest.id)).where(

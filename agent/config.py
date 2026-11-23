@@ -17,6 +17,7 @@ _DEFAULTS = {
     "fail2ban_jail": "shinjisoc",
     "inventory_interval_seconds": 86400,
     "discovery_interval_seconds": 86400,
+    "connections": {"enabled": True, "interval_seconds": 60},
 }
 
 

@@ -21,6 +21,10 @@ _COMBINED_RE = re.compile(
     r'"(?P<method>\S+) (?P<path>\S+)[^"]*" '
     r'(?P<status>\d{3}) \S+ "[^"]*" "(?P<ua>[^"]*)"'
 )
+# Campos entre comillas despues del user-agent. Detras de Cloudflare o de un
+# tunel, el log puede llevar al final la IP real del visitante, por ejemplo
+# con nginx: log_format ... '"$http_user_agent" "$http_cf_connecting_ip"'.
+_TRAILING_QUOTED_RE = re.compile(r'"([^"]*)"')
 
 
 def _load_state() -> dict:
@@ -46,9 +50,14 @@ def _parse_line(line: str) -> dict | None:
     except ValueError:
         ts = None
 
+    # El ultimo campo extra entre comillas, si hay: el servidor solo lo usa
+    # cuando "ip" es la de un proxy de confianza (si no, cualquiera lo inventa).
+    extra = [v for v in _TRAILING_QUOTED_RE.findall(line[match.end():]) if v and v != "-"]
+
     return {
         "ts": ts.isoformat() if ts else None,
         "ip": groups["ip"],
+        "forwarded_for": extra[-1][:200] if extra else None,
         "method": groups["method"],
         "path": groups["path"],
         "status_code": int(groups["status"]),

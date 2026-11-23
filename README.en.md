@@ -11,7 +11,7 @@ Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel t
 ## Features
 
 - **Monitoring:** CPU, memory, disk and network for each server, with threshold alert rules.
-- **Intrusion detection:** web path scans, HTTP floods, SSH and Proxmox web brute force, logins after repeated failures, and suspicious processes under service accounts (possible webshells).
+- **Intrusion detection:** web path scans, HTTP floods, SSH and Proxmox web brute force, logins after repeated failures, suspicious processes under service accounts (possible webshells), new listening ports, unusual outbound connections (possible reverse shells) and connections to known malicious networks (Spamhaus DROP). It recognizes Cloudflare and tunnels: it uses the visitor's real IP and never suggests blocking a proxy's IP.
 - **Response with approval:** each event comes with a suggested action (block the IP with fail2ban or kill the process). Nothing runs until an administrator approves it.
 - **Attack map:** geolocated origin of each attack, using MaxMind's free GeoLite2 database.
 - **Vulnerabilities:** matches installed packages against [OSV.dev](https://osv.dev) and separates what has a fix from what doesn't.

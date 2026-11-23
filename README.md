@@ -9,7 +9,7 @@ Shinji SOC vigila servidores Linux (Debian, Ubuntu, Proxmox VE) desde un panel w
 ## Qué hace
 
 - **Monitoreo:** CPU, memoria, disco y red de cada servidor, con reglas de alerta por umbral.
-- **Detección de intrusos:** escaneos de rutas web, flood HTTP, fuerza bruta por SSH y en la web de Proxmox, inicios de sesión después de varios fallos y procesos sospechosos en cuentas de servicio (posibles webshells).
+- **Detección de intrusos:** escaneos de rutas web, flood HTTP, fuerza bruta por SSH y en la web de Proxmox, inicios de sesión después de varios fallos, procesos sospechosos en cuentas de servicio (posibles webshells), puertos nuevos en escucha, conexiones salientes raras (posibles *reverse shells*) y conexiones a redes maliciosas conocidas (lista DROP de Spamhaus). Reconoce Cloudflare y los túneles: usa la IP real del visitante y nunca propone bloquear la de un proxy.
 - **Respuesta con aprobación:** cada evento trae una acción sugerida (bloquear la IP con fail2ban o terminar el proceso). Nada se ejecuta sin que un administrador lo apruebe.
 - **Mapa de ataques:** origen geolocalizado de cada ataque, con la base gratuita GeoLite2 de MaxMind.
 - **Vulnerabilidades:** cruza los paquetes instalados contra [OSV.dev](https://osv.dev) y separa lo que tiene parche de lo que no.

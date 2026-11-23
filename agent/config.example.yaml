@@ -27,6 +27,13 @@ discovery_interval_seconds: 86400
 
 command_poll_interval_seconds: 10
 
+# Conexiones activas (puertos en escucha y salidas a IPs publicas), sin
+# capturar paquetes: ver conn_watch.py. El servidor avisa de puertos nuevos,
+# salidas raras de cuentas de servicio y conexiones a redes maliciosas.
+connections:
+  enabled: true
+  interval_seconds: 60
+
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
 # agent/fail2ban/jail.d/shinjisoc.conf).
 fail2ban_jail: shinjisoc

@@ -9,7 +9,7 @@ from app.core.db import get_db
 from app.models.alert import Alert, AlertRule
 from app.models.host import Host
 from app.models.metric import Metric
-from app.models.security import AuthAttempt, BlockedIP, Command, IngestedRequest, SecurityEvent
+from app.models.security import AuthAttempt, BlockedIP, Command, HostListener, IngestedRequest, SecurityEvent
 from app.models.system_report import SystemReport
 from app.models.user import User
 from app.models.vulnerability import InstalledPackage, VulnerabilityFinding
@@ -90,6 +90,7 @@ async def delete_host(
     await db.execute(delete(BlockedIP).where(BlockedIP.host_id == host.id))
     await db.execute(delete(IngestedRequest).where(IngestedRequest.host_id == host.id))
     await db.execute(delete(AuthAttempt).where(AuthAttempt.host_id == host.id))
+    await db.execute(delete(HostListener).where(HostListener.host_id == host.id))
     await db.execute(delete(InstalledPackage).where(InstalledPackage.host_id == host.id))
     await db.execute(delete(VulnerabilityFinding).where(VulnerabilityFinding.host_id == host.id))
     await db.execute(delete(SystemReport).where(SystemReport.host_id == host.id))

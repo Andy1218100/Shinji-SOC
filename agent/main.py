@@ -28,6 +28,7 @@ import httpx
 
 import commands
 import config
+import conn_watch
 import discovery
 import inventory
 import auth_watch
@@ -138,6 +139,25 @@ async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict
         await asyncio.sleep(wait)
 
 
+async def connections_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
+    tracker = conn_watch.Tracker()
+    interval = max(interval, 10)
+    while True:
+        try:
+            listeners, outbound = await asyncio.to_thread(conn_watch.snapshot)
+            body = tracker.payload(listeners, outbound)
+            if body:
+                resp = await client.post(f"{base_url}/api/v1/connections/ingest", json=body, headers=headers)
+                if resp.status_code == 404:
+                    # Panel de una version sin este endpoint: no insistir.
+                    logger.warning("El panel no recibe conexiones (version anterior); se desactiva este monitoreo")
+                    return
+                resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo vigilando conexiones")
+        await asyncio.sleep(interval)
+
+
 async def commands_loop(
     client: httpx.AsyncClient, base_url: str, headers: dict, interval: int, fail2ban_jail: str
 ) -> None:
@@ -176,6 +196,7 @@ async def main() -> None:
             if process_watch_cfg["service_users"]:
                 logger.info("Cuentas de servicio autodetectadas: %s", process_watch_cfg["service_users"])
 
+        conn_cfg = cfg.get("connections") or {}
         await asyncio.gather(
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
             logs_loop(client, base_url, headers, log_paths),
@@ -184,6 +205,8 @@ async def main() -> None:
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
+            *([connections_loop(client, base_url, headers, int(conn_cfg.get("interval_seconds", 60)))]
+              if conn_cfg.get("enabled", True) else []),
         )
 
 

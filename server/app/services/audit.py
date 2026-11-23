@@ -249,10 +249,21 @@ def _event_facts(e: SecurityEvent, hosts, aliases) -> dict:
         facts.update({"servicio": d.get("service"), "metodo": d.get("method"), "fallos_previos": d.get("failures"),
                       "ventana_s": d.get("window_seconds"),
                       "usuario_es_root": str(d.get("user") or "").split("@")[0] == "root"})
+    elif e.kind == "new_listener":
+        facts.update({"protocolo": d.get("proto"), "puerto": d.get("port"),
+                      "solo_local": str(d.get("address") or "") in ("127.0.0.1", "::1"),
+                      "proceso": scrub_event_text(str(d.get("cmdline") or d.get("process") or "")[:CMDLINE_CHARS], hosts, aliases)})
+    elif e.kind in ("service_outbound", "malicious_connection"):
+        facts.update({"puerto_remoto": d.get("remote_port"), "cuenta": d.get("user"),
+                      "proceso": scrub_event_text(str(d.get("cmdline") or d.get("process") or "")[:CMDLINE_CHARS], hosts, aliases)})
     elif "path" in d:
         facts.update({"ruta": scrub_event_text(str(d.get("path"))[:CMDLINE_CHARS], hosts, aliases), "metodo": d.get("method")})
     else:
         facts.update({k: v for k, v in d.items() if k in ("requests_in_window", "not_found_in_window", "window_seconds")})
+    if d.get("lista_de_amenazas"):
+        facts["en_lista_de_amenazas"] = True
+    if d.get("detras_de_proxy") or d.get("ip_de_proxy"):
+        facts["ip_de_proxy"] = True
     return facts
 
 

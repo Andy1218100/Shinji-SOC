@@ -10,6 +10,9 @@ class LogEntryIn(BaseModel):
     path: str | None = None
     status_code: int | None = None
     user_agent: str | None = None
+    # IP real que manda un proxy (CF-Connecting-IP o X-Forwarded-For), si el
+    # log la trae. Solo se usa si "ip" es la de un proxy de confianza.
+    forwarded_for: str | None = Field(default=None, max_length=200)
 
 
 class LogBatchIn(BaseModel):
@@ -85,3 +88,33 @@ class SystemReportIn(BaseModel):
     # De donde lee el agente los logins SSH/Proxmox: "journal", la ruta de
     # auth.log, o None (no se vigilan). Agentes viejos no lo mandan.
     auth_log_source: str | None = None
+
+
+class ListenerIn(BaseModel):
+    proto: str = Field(pattern="^(tcp|udp)$")
+    address: str = Field(max_length=64)
+    port: int = Field(ge=0, le=65535)
+    user: str | None = Field(default=None, max_length=64)
+    process: str | None = Field(default=None, max_length=64)
+    pid: int | None = None
+    cmdline: str | None = Field(default=None, max_length=1000)
+
+
+class OutboundIn(BaseModel):
+    proto: str = Field(pattern="^(tcp|udp)$")
+    local_port: int = Field(ge=0, le=65535)
+    remote_ip: str = Field(max_length=64)
+    remote_port: int = Field(ge=0, le=65535)
+    user: str | None = Field(default=None, max_length=64)
+    service_account: bool = False
+    process: str | None = Field(default=None, max_length=64)
+    pid: int | None = None
+    cmdline: str | None = Field(default=None, max_length=1000)
+
+
+class ConnectionsIn(BaseModel):
+    """Lo que manda conn_watch.py del agente. listeners va completo (o null
+    si no cambio desde el ultimo envio); outbound, solo las conexiones
+    salientes nuevas."""
+    listeners: list[ListenerIn] | None = Field(default=None, max_length=2000)
+    outbound: list[OutboundIn] = Field(default_factory=list, max_length=2000)

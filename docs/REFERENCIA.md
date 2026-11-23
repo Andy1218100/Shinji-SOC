@@ -4,6 +4,8 @@ Cómo funciona cada parte, qué límites tiene y cómo usar la API. Para instala
 
 - [Componentes](#componentes)
 - [Detección de intrusos](#detección-de-intrusos)
+- [Conexiones del host](#conexiones-del-host)
+- [Proxies, Cloudflare y la IP real](#proxies-cloudflare-y-la-ip-real)
 - [Eventos de seguridad y bloqueos](#eventos-de-seguridad-y-bloqueos)
 - [Descubrimiento automático del agente](#descubrimiento-automático-del-agente)
 - [Vulnerabilidades de software](#vulnerabilidades-de-software)
@@ -46,17 +48,56 @@ El motor es **heurístico**: reglas y conteos en ventanas de tiempo, no un model
 | Fuerza bruta en la web de Proxmox | El mismo criterio que SSH | igual que SSH |
 | Inicio de sesión después de fallos | Un ingreso exitoso desde una IP que venía fallando (posible contraseña adivinada) | crítica |
 | Proceso sospechoso | Una cuenta de servicio (`www-data`, `nginx`…) lanza `bash`, `wget`, `python`… (posible webshell) | según las señales |
+| Puerto nuevo en escucha | Un puerto que no estaba abierto empieza a escuchar (posible puerta trasera) | crítica si es un shell o intérprete |
+| Salida de una cuenta de servicio | Una cuenta de servicio abre una conexión a una IP pública en un puerto poco común (posible *reverse shell*) | crítica si es un shell o intérprete |
+| Conexión a red maliciosa | Una conexión saliente a una red de Spamhaus DROP | crítica |
 
 Los umbrales se ajustan en **Configuración > Detección de intrusos**.
 
 - **Logs web:** el agente lee los logs de acceso en formato *combined* de nginx/apache. Las líneas con otro formato se ignoran sin error.
 - **Inicios de sesión:** salen del journal de systemd (`journalctl`), o de `/var/log/auth.log` si existe. Proxmox VE 8 en adelante no trae rsyslog ni `auth.log`. El agente manda solo los datos ya extraídos (cuándo, servicio, resultado, usuario, IP), nunca las líneas del log.
 
+## Conexiones del host
+
+El agente lee cada minuto las conexiones activas del sistema (`/proc/net/tcp`, `tcp6`, `udp`, `udp6`), sin capturar paquetes. Con `ss -tunapH` (por `sudo`, limitado a ese comando exacto, que solo lee) sabe además qué proceso y qué PID abrió cada una. Manda al panel:
+
+- **los puertos en escucha**, completos cuando cambian o cada 6 horas. El primer envío de cada servidor es la línea base y no genera eventos; después, un puerto nuevo abre un evento una sola vez;
+- **las conexiones TCP salientes nuevas a IPs públicas**, con la cuenta, el proceso y si es una cuenta de servicio (la misma regla del descubrimiento: UID menor a 1000 o shell `nologin`, sin contar `root` ni el agente).
+
+El panel marca como sospechosa la salida de una cuenta de servicio a puertos que no sean DNS (53), HTTP/HTTPS (80, 443), NTP (123) o DNS sobre TLS (853), y cualquier salida a una red de Spamhaus DROP. La acción sugerida es terminar el proceso: bloquear la IP con fail2ban corta lo que entra, no lo que sale.
+
+Frente a una captura con `tcpdump`, esto dice qué proceso y qué cuenta hizo cada conexión. Con HTTPS, una captura tampoco vería el contenido: TLS está diseñado para impedirlo ([RFC 8446](https://www.rfc-editor.org/rfc/rfc8446)).
+
+Para desactivarlo en un servidor, pon `connections: enabled: false` en `/opt/shinji-soc-agent/config.yaml` y reinicia el agente.
+
+**Listas de redes maliciosas.** El panel descarga una vez al día la lista DROP de [The Spamhaus Project](https://www.spamhaus.org/blocklists/do-not-route-or-peer/) (redes usadas por operaciones de spam y cibercrimen; gratuita, con [condiciones de uso](https://www.spamhaus.org/drop/terms/) que piden no descargarla más de una vez por hora y dar crédito). Además de las conexiones salientes, los eventos de cualquier tipo cuya IP esté en esa lista quedan marcados. Se desactiva en **Configuración > Detección de intrusos > Listas de redes maliciosas**.
+
+## Proxies, Cloudflare y la IP real
+
+Detrás de Cloudflare o de un túnel, el servidor web recibe la conexión del proxy: Cloudflare indica que "a Cloudflare IP address is logged by default", y la IP del visitante viaja en la cabecera `CF-Connecting-IP` ([Cloudflare](https://developers.cloudflare.com/support/troubleshooting/restoring-visitor-ips/restoring-original-visitor-ips/)). Por eso:
+
+- **Nunca se propone bloquear una IP de Cloudflare ni de un proxy de confianza.** Bloquearla no frena al atacante y corta tráfico legítimo. El evento queda, sin la acción.
+- **Si el log trae la IP real, se usa esa.** El agente toma el último campo entre comillas después del user-agent. El panel solo le cree cuando la conexión viene de un proxy, porque cualquiera puede escribir esa cabecera.
+- **Si el log no la trae**, los pedidos del proxy no cuentan para "fuerza bruta" (serían todos los visitantes juntos) y los escaneos se marcan "detrás de proxy".
+
+Proxies de confianza: los rangos de Cloudflare se reconocen solos (se actualizan a diario desde [cloudflare.com/ips](https://www.cloudflare.com/ips/)); los demás se configuran en **Configuración > Detección de intrusos > Proxies y túneles de confianza** (por defecto, solo la propia máquina: `127.0.0.0/8, ::1`). Un `cloudflared` en un contenedor de Docker llega desde la red de Docker (por ejemplo `172.18.0.0/16`).
+
+Para que el log traiga la IP real:
+
+- **nginx detrás de Cloudflare:** el módulo `ngx_http_realip_module` con `set_real_ip_from` (los rangos de Cloudflare) y `real_ip_header CF-Connecting-IP;` hace que la IP real sea la primera del log ([Cloudflare](https://developers.cloudflare.com/support/troubleshooting/restoring-visitor-ips/restoring-original-visitor-ips/)). Otra opción es agregarla al final del formato del log:
+
+  ```nginx
+  log_format shinji '$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_referer" "$http_user_agent" "$http_cf_connecting_ip"';
+  ```
+
+- **Apache:** `mod_remoteip` con `RemoteIPHeader CF-Connecting-IP` y `%a` en el `LogFormat` (misma fuente).
+- **Aplicaciones con su propio servidor web** (por ejemplo, el panel de AMP): el agente solo entiende logs en formato *combined*; si la aplicación no los escribe, sus pedidos no llegan al detector web. Poner un nginx delante con su log de acceso lo resuelve. Las conexiones (sección anterior) sí se vigilan igual.
+
 ## Eventos de seguridad y bloqueos
 
 Cada detección genera un evento con una explicación de la IA y una acción sugerida: bloquear la IP o terminar el proceso. **Nada se bloquea solo:** un admin aprueba cada acción en **Seguridad**. Al aprobar, el servidor deja un comando en cola; el agente lo recoge en su siguiente consulta (cada 10 s) y lo ejecuta.
 
-El bloqueo usa fail2ban con un jail propio (`shinjisoc`) que no detecta nada por su cuenta: solo recibe los bloqueos aprobados en el panel. El agente corre como un usuario sin privilegios; su `sudoers` solo le permite `fail2ban-client set * banip/unbanip *`, terminar procesos con `kill_process.sh` y dar lectura a logs con `grant_log_access.sh`.
+El bloqueo usa fail2ban con un jail propio (`shinjisoc`) que no detecta nada por su cuenta: solo recibe los bloqueos aprobados en el panel. El agente corre como un usuario sin privilegios; su `sudoers` solo le permite `fail2ban-client set * banip/unbanip *`, terminar procesos con `kill_process.sh`, dar lectura a logs con `grant_log_access.sh` y leer las conexiones con `ss -tunapH`.
 
 ## Descubrimiento automático del agente
 

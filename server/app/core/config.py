@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     # Logins fallidos (SSH o web de Proxmox) de una misma IP en la ventana
     ssh_window_seconds: int = 600
     ssh_fail_threshold: int = 5
+    # Proxies y tuneles cuya IP no es la del visitante (ademas de Cloudflare,
+    # que se reconoce solo): IPs o rangos separados por coma.
+    trusted_proxies: str = "127.0.0.0/8, ::1"
+    # Marcar IPs de redes maliciosas conocidas (Spamhaus DROP, descarga diaria).
+    threat_intel_enabled: bool = True
 
     # Escaneo de vulnerabilidades (OSV.dev) sobre el inventario de paquetes
     # que reporta el agente. Una vez al dia por defecto.

@@ -2,6 +2,7 @@
 Cmnd_Alias SHINJISOC_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /usr/bin/fail2ban-client set * unbanip *, \
                               /opt/shinji-soc-agent/kill_process.sh *, \
-                              /opt/shinji-soc-agent/grant_log_access.sh *
+                              /opt/shinji-soc-agent/grant_log_access.sh *, \
+                              /usr/bin/ss -tunapH
 
 shinji-soc ALL=(root) NOPASSWD: SHINJISOC_CMDS

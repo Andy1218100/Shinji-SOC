@@ -84,9 +84,9 @@ fi
 # otorgamiento de acceso a logs aprobado desde el dashboard (commands.py
 # invoca "sudo" en tiempo real). "acl" trae setfacl, que usa
 # grant_log_access.sh para dar lectura puntual sin tocar duenos/permisos.
-echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl)..."
+echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl, iproute2)..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
+apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl iproute2
 
 id -u shinji-soc &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin shinji-soc
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
@@ -100,6 +100,7 @@ echo "Escribiendo los archivos del agente en $INSTALL_DIR..."
 HEAD_EOF
 
 emit_file "commands.py"          '$INSTALL_DIR/commands.py'
+emit_file "conn_watch.py"        '$INSTALL_DIR/conn_watch.py'
 emit_file "config.py"            '$INSTALL_DIR/config.py'
 emit_file "discovery.py"         '$INSTALL_DIR/discovery.py'
 emit_file "inventory.py"         '$INSTALL_DIR/inventory.py'

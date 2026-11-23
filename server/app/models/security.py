@@ -96,3 +96,22 @@ class IngestedRequest(Base):
     path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class HostListener(Base):
+    """Puertos en escucha conocidos de cada host (los manda conn_watch.py del
+    agente). El primer envio es la linea base: no genera eventos. Despues,
+    un puerto nuevo abre un evento una sola vez; si el puerto se cierra y
+    vuelve a abrir, no se repite."""
+
+    __tablename__ = "host_listeners"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    host_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosts.id"), index=True)
+    proto: Mapped[str] = mapped_column(String(8))
+    port: Mapped[int] = mapped_column(Integer)
+    address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    process: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

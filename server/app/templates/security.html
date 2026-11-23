@@ -63,6 +63,19 @@
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="https://unpkg.com/leaflet-ant-path@1.3.0/dist/leaflet-ant-path.js"></script>
 <script>
+// Nombres legibles de los tipos de evento (ids.KIND_LABELS en el servidor).
+const KIND_LABELS = {
+  path_scan: 'Escaneo de rutas web',
+  brute_force: 'Flood o fuerza bruta HTTP',
+  process_anomaly: 'Proceso sospechoso',
+  ssh_brute_force: 'Fuerza bruta por SSH',
+  pve_brute_force: 'Fuerza bruta en la web de Proxmox',
+  login_after_failures: 'Login despues de varios fallos',
+  new_listener: 'Puerto nuevo en escucha',
+  service_outbound: 'Salida de una cuenta de servicio',
+  malicious_connection: 'Conexion a red maliciosa',
+};
+const kindLabel = (k) => KIND_LABELS[k] || k;
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 // Todo lo que viene de la API se escapa: el resumen de IA sale de un prompt
 // con user-agents y rutas que manda cualquiera desde internet (inyeccion
@@ -252,7 +265,7 @@ async function loadEvents() {
       radius: 7,
       color: sev === 'crit' ? '#e5595c' : '#e0a030',
       fillOpacity: 0.6,
-    }).bindPopup(`${esc(ev.source_ip)}<br>${esc(ev.kind)}`);
+    }).bindPopup(`${esc(ev.source_ip)}<br>${esc(kindLabel(ev.kind))}`);
     clusterGroup.addLayer(marker);
   }
 
@@ -269,7 +282,7 @@ async function loadEvents() {
     return `
       <tr>
         <td>${formatDate(ev.created_at)}</td>
-        <td>${esc(ev.kind)}</td>
+        <td>${esc(kindLabel(ev.kind))}</td>
         <td><span class="badge ${sev}">${esc(ev.severity)}</span></td>
         <td>${esc(ev.source_ip || '-')}${esc(geo)}</td>
         <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}${auditBadge(ev)}</td>

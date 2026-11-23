@@ -12,8 +12,9 @@ API_KEY="${2:?Falta api_key del host (se genera al crear el host en el servidor)
 INSTALL_DIR="/opt/shinji-soc-agent"
 # Opcional: certificado raiz de una CA propia, si el panel usa HTTPS con un
 # certificado que no es publico (con Cloudflare Tunnel no hace falta; ver
-# docs/AGENTE.md). Al reinstalar con ". .env && install.sh ..." se toma el
-# que ya estaba configurado.
+# docs/AGENTE.md). Para conservarlo al reinstalar hay que pasarlo como
+# tercer argumento ("${SHINJI_SOC_CA_FILE:-}" despues de ". .env"): las
+# variables de un ". .env" no llegan a este script porque no se exportan.
 CA_FILE="${3:-${SHINJI_SOC_CA_FILE:-}}"
 if [ -n "$CA_FILE" ] && [ ! -f "$CA_FILE" ]; then
   echo "No existe el certificado $CA_FILE" >&2
@@ -47,9 +48,9 @@ fi
 # otorgamiento de acceso a logs aprobado desde el dashboard (commands.py
 # invoca "sudo" en tiempo real). "acl" trae setfacl, que usa
 # grant_log_access.sh para dar lectura puntual sin tocar duenos/permisos.
-echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl)..."
+echo "Instalando dependencias del sistema (python3, venv, pip, sudo, fail2ban, acl, iproute2)..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl
+apt-get install -y python3 python3-venv python3-pip sudo fail2ban acl iproute2
 
 id -u shinji-soc &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin shinji-soc
 # Grupo "adm": en Debian/Ubuntu es el dueno de lectura de /var/log/nginx,
@@ -152,8 +153,231 @@ async def poll_and_execute(client: httpx.AsyncClient, base_url: str, headers: di
             logger.exception("Fallo reenviando el informe de sistema tras otorgar acceso")
 SHINJISOC_EMBED_1_EOF
 
+mkdir -p "$(dirname "$INSTALL_DIR/conn_watch.py")"
+cat > "$INSTALL_DIR/conn_watch.py" <<'SHINJISOC_EMBED_2_EOF'
+"""Conexiones activas del host, sin capturar paquetes.
+
+Lee /proc/net/{tcp,tcp6,udp,udp6} (legibles por cualquier usuario: traen
+direcciones, estado y el UID dueno de cada socket) y, para saber que
+proceso abrio cada conexion, `ss -tunapH` via sudo (sudoers acotado a ese
+comando exacto: solo lee). Sin sudo, todo funciona igual salvo el nombre
+del proceso.
+
+Manda al servidor:
+- los puertos en escucha (lista completa, cuando cambia o cada 6 horas);
+- las conexiones TCP salientes nuevas a IPs publicas.
+El servidor decide que es sospechoso (services/conn_watch.py).
+
+A diferencia de tcpdump, esto dice que proceso y que cuenta abrio cada
+conexion; con HTTPS, tcpdump tampoco veria el contenido.
+"""
+
+import ipaddress
+import os
+import re
+import subprocess
+import time
+
+try:
+    import pwd
+except ImportError:  # Windows (tests): sin nombres de usuario
+    pwd = None
+
+PROC_NET = "/proc/net"
+SS_COMMAND = ["sudo", "-n", "/usr/bin/ss", "-tunapH"]
+TCP_LISTEN, TCP_ESTABLISHED, UDP_UNCONNECTED = "0A", "01", "07"
+# Puertos UDP efimeros (ip_local_port_range por defecto: 32768-60999): los
+# abren los clientes (DNS, NTP) y cambian todo el tiempo; no son servicios.
+UDP_EPHEMERAL_MIN = 32768
+NOLOGIN_SHELLS = {"/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", ""}
+SYSTEM_UID_MAX = 999
+EXCLUDED_USERS = {"root", "shinji-soc"}
+LISTENERS_RESEND_SECONDS = 6 * 3600
+OUTBOUND_MEMORY_SECONDS = 3600
+
+_USERS_RE = re.compile(r'\("([^"]+)",pid=(\d+)')
+
+
+def _hex_ip(text: str) -> str:
+    """Direccion de /proc/net: IPv4 son 4 bytes en orden de la maquina
+    (little-endian); IPv6, cuatro palabras de 4 bytes, cada una igual."""
+    raw = bytes.fromhex(text)
+    if len(raw) == 4:
+        ip = ipaddress.ip_address(raw[::-1])
+    else:
+        ip = ipaddress.ip_address(b"".join(raw[i:i + 4][::-1] for i in range(0, 16, 4)))
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+    return str(ip)
+
+
+def parse_proc_net(text: str, proto: str) -> list[dict]:
+    sockets = []
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) < 10:
+            continue
+        try:
+            local_ip, local_port = fields[1].split(":")
+            remote_ip, remote_port = fields[2].split(":")
+            sockets.append({
+                "proto": proto,
+                "local_ip": _hex_ip(local_ip), "local_port": int(local_port, 16),
+                "remote_ip": _hex_ip(remote_ip), "remote_port": int(remote_port, 16),
+                "state": fields[3], "uid": int(fields[7]),
+            })
+        except (ValueError, IndexError):
+            continue
+    return sockets
+
+
+def _split_addr(text: str) -> tuple[str, str]:
+    host, _, port = text.rpartition(":")
+    host = host.strip("[]").split("%")[0]
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.version == 6 and ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        host = str(ip)
+    except ValueError:
+        pass  # "*" en las direcciones remotas de los que escuchan
+    return host, port
+
+
+def parse_ss(text: str) -> dict:
+    """{(proto, ip_local, puerto_local, ip_remota, puerto_remoto): (proceso, pid)}"""
+    owners = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 6:
+            continue
+        match = _USERS_RE.search(line)
+        if not match:
+            continue
+        local_ip, local_port = _split_addr(fields[4])
+        remote_ip, remote_port = _split_addr(fields[5])
+        owners[(fields[0], local_ip, local_port, remote_ip, remote_port)] = (match.group(1), int(match.group(2)))
+    return owners
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, encoding="ascii", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return ""
+
+
+def _ss_owners() -> dict:
+    try:
+        out = subprocess.run(SS_COMMAND, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    return parse_ss(out.stdout) if out.returncode == 0 else {}
+
+
+def _cmdline(pid: int | None) -> str | None:
+    if not pid:
+        return None
+    raw = _read(f"/proc/{pid}/cmdline")
+    return raw.replace("\0", " ").strip()[:1000] or None
+
+
+_user_cache: dict[int, tuple[str | None, bool]] = {}
+
+
+def _user(uid: int) -> tuple[str | None, bool]:
+    """(nombre, es_cuenta_de_servicio) con la misma regla que discovery.py."""
+    if uid not in _user_cache:
+        name, service = None, False
+        if pwd is not None:
+            try:
+                entry = pwd.getpwuid(uid)
+                name = entry.pw_name
+                service = name not in EXCLUDED_USERS and (entry.pw_shell in NOLOGIN_SHELLS or uid < SYSTEM_UID_MAX)
+            except KeyError:
+                pass
+        _user_cache[uid] = (name, service)
+    return _user_cache[uid]
+
+
+def snapshot(proc_net: str = PROC_NET, owners: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """(puertos en escucha, conexiones TCP salientes a IPs publicas)."""
+    sockets = []
+    for name, proto in (("tcp", "tcp"), ("tcp6", "tcp"), ("udp", "udp"), ("udp6", "udp")):
+        sockets += parse_proc_net(_read(os.path.join(proc_net, name)), proto)
+    if owners is None:
+        owners = _ss_owners()
+
+    # Los que escuchan aparecen en ss con el remoto "0.0.0.0:*", "[::]:*" o
+    # "*:*": se buscan solo por protocolo, direccion y puerto local.
+    listen_owners = {(k[0], k[1], k[2]): v for k, v in owners.items() if k[4] == "*"}
+
+    def owner(s: dict, listening: bool) -> tuple[str | None, int | None]:
+        port = str(s["local_port"])
+        if listening:
+            for local_ip in (s["local_ip"], "*", "0.0.0.0", "::"):
+                hit = listen_owners.get((s["proto"], local_ip, port))
+                if hit:
+                    return hit
+            return None, None
+        return owners.get((s["proto"], s["local_ip"], port, s["remote_ip"], str(s["remote_port"])), (None, None))
+
+    listeners, outbound = [], []
+    listening_tcp_ports = {s["local_port"] for s in sockets if s["proto"] == "tcp" and s["state"] == TCP_LISTEN}
+    for s in sockets:
+        is_listener = (s["proto"] == "tcp" and s["state"] == TCP_LISTEN) or (
+            s["proto"] == "udp" and s["state"] == UDP_UNCONNECTED and s["local_port"] < UDP_EPHEMERAL_MIN)
+        if is_listener:
+            user, _ = _user(s["uid"])
+            process, pid = owner(s, True)
+            listeners.append({"proto": s["proto"], "address": s["local_ip"], "port": s["local_port"],
+                              "user": user, "process": process, "pid": pid, "cmdline": _cmdline(pid)})
+            continue
+        if s["proto"] != "tcp" or s["state"] != TCP_ESTABLISHED or s["local_port"] in listening_tcp_ports:
+            continue  # solo salientes: las que llegan a un puerto propio en escucha son entrantes
+        try:
+            if not ipaddress.ip_address(s["remote_ip"]).is_global:
+                continue
+        except ValueError:
+            continue
+        user, service = _user(s["uid"])
+        process, pid = owner(s, False)
+        outbound.append({"proto": "tcp", "local_port": s["local_port"], "remote_ip": s["remote_ip"],
+                         "remote_port": s["remote_port"], "user": user, "service_account": service,
+                         "process": process, "pid": pid, "cmdline": _cmdline(pid)})
+    return listeners, outbound
+
+
+class Tracker:
+    """Decide que mandar en cada vuelta: los puertos en escucha si cambiaron
+    (o cada 6 h), y solo las conexiones salientes no vistas en la ultima hora."""
+
+    def __init__(self) -> None:
+        self._listeners_key: frozenset | None = None
+        self._listeners_sent_at = 0.0
+        self._seen: dict[tuple, float] = {}
+
+    def payload(self, listeners: list[dict], outbound: list[dict], now: float | None = None) -> dict | None:
+        now = time.time() if now is None else now
+        body: dict = {"listeners": None, "outbound": []}
+        key = frozenset((item["proto"], item["port"]) for item in listeners)
+        if key != self._listeners_key or now - self._listeners_sent_at > LISTENERS_RESEND_SECONDS:
+            body["listeners"] = listeners
+            self._listeners_key, self._listeners_sent_at = key, now
+        self._seen = {k: t for k, t in self._seen.items() if now - t < OUTBOUND_MEMORY_SECONDS}
+        for conn in outbound:
+            k = (conn["user"], conn["remote_ip"], conn["remote_port"], conn["process"])
+            if k not in self._seen:
+                self._seen[k] = now
+                body["outbound"].append(conn)
+        if body["listeners"] is None and not body["outbound"]:
+            return None
+        return body
+SHINJISOC_EMBED_2_EOF
+
 mkdir -p "$(dirname "$INSTALL_DIR/config.py")"
-cat > "$INSTALL_DIR/config.py" <<'SHINJISOC_EMBED_2_EOF'
+cat > "$INSTALL_DIR/config.py" <<'SHINJISOC_EMBED_3_EOF'
 import os
 import sys
 
@@ -173,6 +397,7 @@ _DEFAULTS = {
     "fail2ban_jail": "shinjisoc",
     "inventory_interval_seconds": 86400,
     "discovery_interval_seconds": 86400,
+    "connections": {"enabled": True, "interval_seconds": 60},
 }
 
 
@@ -191,10 +416,10 @@ def load() -> dict:
         sys.exit(1)
 
     return config
-SHINJISOC_EMBED_2_EOF
+SHINJISOC_EMBED_3_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/discovery.py")"
-cat > "$INSTALL_DIR/discovery.py" <<'SHINJISOC_EMBED_3_EOF'
+cat > "$INSTALL_DIR/discovery.py" <<'SHINJISOC_EMBED_4_EOF'
 """Descubrimiento del sistema: que es este host, que corre, que puertos
 tiene abiertos, y que logs/cuentas de servicio tiene sentido vigilar en
 *este* host en particular -- en vez de depender de que el admin edite
@@ -501,10 +726,10 @@ def full_report() -> dict:
 
     report["auth_log_source"] = auth_watch.detect_source()
     return report
-SHINJISOC_EMBED_3_EOF
+SHINJISOC_EMBED_4_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/inventory.py")"
-cat > "$INSTALL_DIR/inventory.py" <<'SHINJISOC_EMBED_4_EOF'
+cat > "$INSTALL_DIR/inventory.py" <<'SHINJISOC_EMBED_5_EOF'
 """Inventario de paquetes instalados (dpkg), para que el servidor pueda
 cruzarlo contra OSV.dev y detectar software con vulnerabilidades
 conocidas. Solo funciona en sistemas basados en Debian/Ubuntu (como el
@@ -586,10 +811,10 @@ async def send(client: httpx.AsyncClient, base_url: str, headers: dict) -> int:
     resp = await client.post(f"{base_url}/api/v1/inventory/ingest", json=payload, headers=headers)
     resp.raise_for_status()
     return len(packages)
-SHINJISOC_EMBED_4_EOF
+SHINJISOC_EMBED_5_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/auth_watch.py")"
-cat > "$INSTALL_DIR/auth_watch.py" <<'SHINJISOC_EMBED_5_EOF'
+cat > "$INSTALL_DIR/auth_watch.py" <<'SHINJISOC_EMBED_6_EOF'
 """Intentos de inicio de sesion por SSH y en la interfaz web de Proxmox.
 
 Fuente: el journal de systemd (journalctl). Proxmox VE 8 en adelante no
@@ -747,10 +972,10 @@ def read_new_entries(source: str) -> list[dict]:
     entries = _read_journal(state) if source == "journal" else _read_auth_log(state)
     _save_state(state)
     return entries
-SHINJISOC_EMBED_5_EOF
+SHINJISOC_EMBED_6_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/log_tailer.py")"
-cat > "$INSTALL_DIR/log_tailer.py" <<'SHINJISOC_EMBED_6_EOF'
+cat > "$INSTALL_DIR/log_tailer.py" <<'SHINJISOC_EMBED_7_EOF'
 """Lee nuevas lineas de logs de acceso (formato 'combined' de nginx/apache)
 y las devuelve como entradas estructuradas para mandar al servidor.
 
@@ -774,6 +999,10 @@ _COMBINED_RE = re.compile(
     r'"(?P<method>\S+) (?P<path>\S+)[^"]*" '
     r'(?P<status>\d{3}) \S+ "[^"]*" "(?P<ua>[^"]*)"'
 )
+# Campos entre comillas despues del user-agent. Detras de Cloudflare o de un
+# tunel, el log puede llevar al final la IP real del visitante, por ejemplo
+# con nginx: log_format ... '"$http_user_agent" "$http_cf_connecting_ip"'.
+_TRAILING_QUOTED_RE = re.compile(r'"([^"]*)"')
 
 
 def _load_state() -> dict:
@@ -799,9 +1028,14 @@ def _parse_line(line: str) -> dict | None:
     except ValueError:
         ts = None
 
+    # El ultimo campo extra entre comillas, si hay: el servidor solo lo usa
+    # cuando "ip" es la de un proxy de confianza (si no, cualquiera lo inventa).
+    extra = [v for v in _TRAILING_QUOTED_RE.findall(line[match.end():]) if v and v != "-"]
+
     return {
         "ts": ts.isoformat() if ts else None,
         "ip": groups["ip"],
+        "forwarded_for": extra[-1][:200] if extra else None,
         "method": groups["method"],
         "path": groups["path"],
         "status_code": int(groups["status"]),
@@ -842,10 +1076,10 @@ def read_new_entries(log_paths: list[str]) -> list[dict]:
 
     _save_state(state)
     return entries
-SHINJISOC_EMBED_6_EOF
+SHINJISOC_EMBED_7_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/main.py")"
-cat > "$INSTALL_DIR/main.py" <<'SHINJISOC_EMBED_7_EOF'
+cat > "$INSTALL_DIR/main.py" <<'SHINJISOC_EMBED_8_EOF'
 """Agente Shinji SOC: un solo proceso con varias tareas concurrentes.
 
 - discovery: lo primero que hace el agente al arrancar es describir el
@@ -876,6 +1110,7 @@ import httpx
 
 import commands
 import config
+import conn_watch
 import discovery
 import inventory
 import auth_watch
@@ -986,6 +1221,25 @@ async def inventory_loop(client: httpx.AsyncClient, base_url: str, headers: dict
         await asyncio.sleep(wait)
 
 
+async def connections_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
+    tracker = conn_watch.Tracker()
+    interval = max(interval, 10)
+    while True:
+        try:
+            listeners, outbound = await asyncio.to_thread(conn_watch.snapshot)
+            body = tracker.payload(listeners, outbound)
+            if body:
+                resp = await client.post(f"{base_url}/api/v1/connections/ingest", json=body, headers=headers)
+                if resp.status_code == 404:
+                    # Panel de una version sin este endpoint: no insistir.
+                    logger.warning("El panel no recibe conexiones (version anterior); se desactiva este monitoreo")
+                    return
+                resp.raise_for_status()
+        except Exception:
+            logger.exception("Fallo vigilando conexiones")
+        await asyncio.sleep(interval)
+
+
 async def commands_loop(
     client: httpx.AsyncClient, base_url: str, headers: dict, interval: int, fail2ban_jail: str
 ) -> None:
@@ -1024,6 +1278,7 @@ async def main() -> None:
             if process_watch_cfg["service_users"]:
                 logger.info("Cuentas de servicio autodetectadas: %s", process_watch_cfg["service_users"])
 
+        conn_cfg = cfg.get("connections") or {}
         await asyncio.gather(
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
             logs_loop(client, base_url, headers, log_paths),
@@ -1032,15 +1287,17 @@ async def main() -> None:
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
+            *([connections_loop(client, base_url, headers, int(conn_cfg.get("interval_seconds", 60)))]
+              if conn_cfg.get("enabled", True) else []),
         )
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-SHINJISOC_EMBED_7_EOF
+SHINJISOC_EMBED_8_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/metrics.py")"
-cat > "$INSTALL_DIR/metrics.py" <<'SHINJISOC_EMBED_8_EOF'
+cat > "$INSTALL_DIR/metrics.py" <<'SHINJISOC_EMBED_9_EOF'
 import os
 import time
 from datetime import datetime, timezone
@@ -1113,10 +1370,10 @@ def collect() -> dict:
         "net_tx_kbps": net_tx_kbps,
         "uptime_seconds": int(time.time() - psutil.boot_time()),
     }
-SHINJISOC_EMBED_8_EOF
+SHINJISOC_EMBED_9_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/process_watch.py")"
-cat > "$INSTALL_DIR/process_watch.py" <<'SHINJISOC_EMBED_9_EOF'
+cat > "$INSTALL_DIR/process_watch.py" <<'SHINJISOC_EMBED_10_EOF'
 """Vigila procesos de cuentas de servicio (www-data, nginx, etc.) buscando
 ejecucion de binarios que normalmente no deberian correr bajo esas cuentas
 (shells, intepretes, herramientas de red) -- indicador clasico de webshell
@@ -1219,17 +1476,17 @@ def scan(service_users: list[str]) -> list[dict]:
 
     _reported_pids.intersection_update(live_pids)
     return anomalies
-SHINJISOC_EMBED_9_EOF
+SHINJISOC_EMBED_10_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/requirements.txt")"
-cat > "$INSTALL_DIR/requirements.txt" <<'SHINJISOC_EMBED_10_EOF'
+cat > "$INSTALL_DIR/requirements.txt" <<'SHINJISOC_EMBED_11_EOF'
 psutil==6.1.0
 httpx==0.27.2
 PyYAML==6.0.2
-SHINJISOC_EMBED_10_EOF
+SHINJISOC_EMBED_11_EOF
 
 mkdir -p "$(dirname "$INSTALL_DIR/kill_process.sh")"
-cat > "$INSTALL_DIR/kill_process.sh" <<'SHINJISOC_EMBED_11_EOF'
+cat > "$INSTALL_DIR/kill_process.sh" <<'SHINJISOC_EMBED_12_EOF'
 #!/usr/bin/env bash
 # Mata un proceso SOLO si su cmdline actual todavia contiene la cadena
 # esperada, para evitar matar un PID reciclado que ya no es el proceso
@@ -1253,11 +1510,11 @@ fi
 
 kill -9 "$PID"
 echo "pid $PID terminado (cmdline: $CMDLINE)"
-SHINJISOC_EMBED_11_EOF
+SHINJISOC_EMBED_12_EOF
 chmod 755 "$INSTALL_DIR/kill_process.sh"
 
 mkdir -p "$(dirname "$INSTALL_DIR/grant_log_access.sh")"
-cat > "$INSTALL_DIR/grant_log_access.sh" <<'SHINJISOC_EMBED_12_EOF'
+cat > "$INSTALL_DIR/grant_log_access.sh" <<'SHINJISOC_EMBED_13_EOF'
 #!/usr/bin/env bash
 # Da a shinji-soc permiso de LECTURA (via ACL -- nunca toca duenos ni
 # permisos existentes, nunca agrega escritura) sobre una carpeta o
@@ -1322,11 +1579,11 @@ GRANTED="$(dirname "$(realpath "$0")")/granted_paths"
 grep -qxF "$RESOLVED" "$GRANTED" 2>/dev/null || echo "$RESOLVED" >> "$GRANTED"
 
 echo "acceso de lectura otorgado a shinji-soc sobre $RESOLVED"
-SHINJISOC_EMBED_12_EOF
+SHINJISOC_EMBED_13_EOF
 chmod 755 "$INSTALL_DIR/grant_log_access.sh"
 
 mkdir -p "$(dirname "/usr/local/sbin/shinji-soc-uninstall")"
-cat > "/usr/local/sbin/shinji-soc-uninstall" <<'SHINJISOC_EMBED_13_EOF'
+cat > "/usr/local/sbin/shinji-soc-uninstall" <<'SHINJISOC_EMBED_14_EOF'
 #!/usr/bin/env bash
 # Quita el agente de Shinji SOC de este host: todo lo que puso install.sh.
 # Tambien quita un agente instalado con el nombre anterior del proyecto
@@ -1550,12 +1807,12 @@ else
   echo "Los paquetes (python3-venv, fail2ban, acl, sudo) quedan instalados."
   echo "Para borrar tambien el host y su historial del panel: Monitoreo > el host > Eliminar (pide MFA)."
 fi
-SHINJISOC_EMBED_13_EOF
+SHINJISOC_EMBED_14_EOF
 chmod 755 "/usr/local/sbin/shinji-soc-uninstall"
 
 if [[ ! -f "$INSTALL_DIR/config.yaml" ]]; then
 mkdir -p "$(dirname "$INSTALL_DIR/config.yaml")"
-cat > "$INSTALL_DIR/config.yaml" <<'SHINJISOC_EMBED_14_EOF'
+cat > "$INSTALL_DIR/config.yaml" <<'SHINJISOC_EMBED_15_EOF'
 # Copiar a config.yaml y completar con los datos reales del host.
 server_url: "http://TU_SERVIDOR:8000"
 api_key: "LA_API_KEY_DEL_HOST"
@@ -1585,10 +1842,17 @@ discovery_interval_seconds: 86400
 
 command_poll_interval_seconds: 10
 
+# Conexiones activas (puertos en escucha y salidas a IPs publicas), sin
+# capturar paquetes: ver conn_watch.py. El servidor avisa de puertos nuevos,
+# salidas raras de cuentas de servicio y conexiones a redes maliciosas.
+connections:
+  enabled: true
+  interval_seconds: 60
+
 # Nombre del jail de fail2ban usado para bloqueos manuales (ver
 # agent/fail2ban/jail.d/shinjisoc.conf).
 fail2ban_jail: shinjisoc
-SHINJISOC_EMBED_14_EOF
+SHINJISOC_EMBED_15_EOF
 
   echo "Creado $INSTALL_DIR/config.yaml con valores de ejemplo."
   echo "Editalo para activar log_paths/service_users a mano si el autodescubrimiento no alcanza."
@@ -1614,7 +1878,7 @@ chown -R shinji-soc:shinji-soc "$INSTALL_DIR"
 
 # fail2ban: jail dedicado para bloqueos manuales via panel
 mkdir -p "$(dirname "/etc/fail2ban/filter.d/shinjisoc.conf")"
-cat > "/etc/fail2ban/filter.d/shinjisoc.conf" <<'SHINJISOC_EMBED_15_EOF'
+cat > "/etc/fail2ban/filter.d/shinjisoc.conf" <<'SHINJISOC_EMBED_16_EOF'
 [Definition]
 # Este filtro nunca matchea nada a proposito: el jail "shinjisoc" solo se
 # usa para bloqueos MANUALES disparados desde el panel
@@ -1625,10 +1889,10 @@ cat > "/etc/fail2ban/filter.d/shinjisoc.conf" <<'SHINJISOC_EMBED_15_EOF'
 # El archivo que lee el jail esta siempre vacio, asi que nunca coincide.
 failregex = ^SHINJISOC_NUNCA_MATCHEA_ESTO <HOST>$
 ignoreregex =
-SHINJISOC_EMBED_15_EOF
+SHINJISOC_EMBED_16_EOF
 
 mkdir -p "$(dirname "/etc/fail2ban/jail.d/shinjisoc.conf")"
-cat > "/etc/fail2ban/jail.d/shinjisoc.conf" <<'SHINJISOC_EMBED_16_EOF'
+cat > "/etc/fail2ban/jail.d/shinjisoc.conf" <<'SHINJISOC_EMBED_17_EOF'
 # logpath: archivo propio y vacio (lo crea install.sh). El filtro nunca
 # matchea: este jail solo recibe bloqueos manuales desde el panel.
 [shinjisoc]
@@ -1640,7 +1904,7 @@ maxretry = 999999
 findtime = 86400
 bantime = 3600
 action = %(action_)s
-SHINJISOC_EMBED_16_EOF
+SHINJISOC_EMBED_17_EOF
 
 # El jail no lee logs (solo recibe bloqueos manuales), pero fail2ban exige
 # que el logpath exista. Antes era /var/log/auth.log, que no existe en
@@ -1660,20 +1924,21 @@ fi
 
 # sudo acotado: solo fail2ban-client (banip/unbanip) y el wrapper de kill
 mkdir -p "$(dirname "/etc/sudoers.d/shinji-soc-agent")"
-cat > "/etc/sudoers.d/shinji-soc-agent" <<'SHINJISOC_EMBED_17_EOF'
+cat > "/etc/sudoers.d/shinji-soc-agent" <<'SHINJISOC_EMBED_18_EOF'
 
 Cmnd_Alias SHINJISOC_CMDS = /usr/bin/fail2ban-client set * banip *, \
                               /usr/bin/fail2ban-client set * unbanip *, \
                               /opt/shinji-soc-agent/kill_process.sh *, \
-                              /opt/shinji-soc-agent/grant_log_access.sh *
+                              /opt/shinji-soc-agent/grant_log_access.sh *, \
+                              /usr/bin/ss -tunapH
 
 shinji-soc ALL=(root) NOPASSWD: SHINJISOC_CMDS
-SHINJISOC_EMBED_17_EOF
+SHINJISOC_EMBED_18_EOF
 chmod 440 "/etc/sudoers.d/shinji-soc-agent"
 
 visudo -c -f /etc/sudoers.d/shinji-soc-agent
 mkdir -p "$(dirname "/etc/systemd/system/shinji-soc-agent.service")"
-cat > "/etc/systemd/system/shinji-soc-agent.service" <<'SHINJISOC_EMBED_18_EOF'
+cat > "/etc/systemd/system/shinji-soc-agent.service" <<'SHINJISOC_EMBED_19_EOF'
 [Unit]
 Description=Shinji SOC - agente de monitoreo
 After=network-online.target
@@ -1691,7 +1956,7 @@ Group=shinji-soc
 
 [Install]
 WantedBy=multi-user.target
-SHINJISOC_EMBED_18_EOF
+SHINJISOC_EMBED_19_EOF
 
 systemctl daemon-reload
 systemctl enable shinji-soc-agent

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import account, ai, alerts, audit, auth, config_api, setup, commands, dashboard, hosts, logs, metrics, security, users, vulnerabilities
 from app.api.deps import Forbidden, NotAuthenticated
 from app.core.db import Base, SessionLocal, engine, ensure_columns, ensure_hypertables
-from app.services import app_settings, first_run, retention
+from app.services import app_settings, first_run, netlists, retention
 from app.services.alerting import run_forever as alerting_run_forever
 from app.services.system_report import run_forever as system_report_run_forever
 from app.services.vuln_scan import run_forever as vuln_scan_run_forever
@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(vuln_scan_run_forever()),
         asyncio.create_task(system_report_run_forever()),
         asyncio.create_task(retention.run_forever()),
+        asyncio.create_task(netlists.run_forever()),
     ]
     yield
     for task in tasks:
