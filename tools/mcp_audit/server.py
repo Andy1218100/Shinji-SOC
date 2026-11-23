@@ -25,7 +25,8 @@ import urllib.request
 from pathlib import Path
 
 SERVER_NAME = "shinji-soc-audit"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
+USER_AGENT = f"ShinjiSOC-MCP/{SERVER_VERSION} (+https://github.com/Andy1218100/Shinji-SOC)"
 DEFAULT_PROTOCOL = "2025-06-18"
 
 
@@ -138,7 +139,13 @@ def _http(method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
         BASE_URL + path, data=data, method=method,
-        headers={"X-Audit-Token": TOKEN, "Content-Type": "application/json"},
+        headers={
+            "X-Audit-Token": TOKEN,
+            "Content-Type": "application/json",
+            # Cloudflare (Browser Integrity Check) rechaza el User-Agent por
+            # defecto de urllib ("Python-urllib/3.x") con el error 1010.
+            "User-Agent": USER_AGENT,
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=60, context=SSL_CONTEXT) as resp:
@@ -193,7 +200,9 @@ def _handle(msg: dict) -> dict | None:
 
 def main() -> None:
     for line in sys.stdin:
-        line = line.strip()
+        # PowerShell antepone una marca de orden de bytes (BOM) al texto que
+        # le pasa a un programa: sin quitarla, la linea no es JSON valido.
+        line = line.strip().lstrip("﻿")
         if not line:
             continue
         try:

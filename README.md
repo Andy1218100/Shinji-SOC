@@ -64,7 +64,7 @@ Después borra el servidor del panel (**Monitoreo** > el servidor > **Eliminar**
 |---|---|
 | [Manual de instalación](docs/INSTALACION.md) | Instalar el servidor, configurar HTTPS, agregar servidores, respaldar, actualizar y desinstalar. |
 | [Guía del agente](docs/AGENTE.md) | Instalar y desinstalar el agente en cada servidor que quieres vigilar, qué datos manda y cómo resolver problemas de conexión. |
-| [Servidor MCP con Claude](docs/MCP.md) | Conectar Claude Code o Claude Desktop para auditar y corregir los textos de la IA local, con datos minimizados. |
+| [Servidor MCP con Claude](docs/MCP.md) | Conectar Claude Code o Claude Desktop para auditar y corregir los textos de la IA local, con datos minimizados. Incluye una skill (`/conectar-shinji-soc-mcp`) que hace la conexión preguntando paso a paso. |
 | [Manual de MFA](docs/MFA.md) | Para cada persona que usa el panel: primer ingreso, códigos de respaldo, cambio de teléfono. |
 | [Referencia técnica](docs/REFERENCIA.md) | Cómo funciona cada parte, la API, la auditoría con Claude Code, desarrollo y limitaciones. |
 

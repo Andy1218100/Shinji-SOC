@@ -3,6 +3,7 @@
 Shinji SOC trae un servidor MCP (`tools/mcp_audit/server.py`) que permite a Claude revisar los textos que escribe la IA local (un modelo chico, de 3B parámetros): las recomendaciones de vulnerabilidades, los resúmenes de eventos de seguridad y los informes de los servidores. Claude corrige los que están mal y deja reglas para que la IA local no repita el error.
 
 - [Cómo funciona](#cómo-funciona)
+- [La forma fácil: el asistente (skill)](#la-forma-fácil-el-asistente-skill)
 - [Requisitos](#requisitos)
 - [1. Genera el token de auditoría](#1-genera-el-token-de-auditoría)
 - [2. Consigue el servidor MCP](#2-consigue-el-servidor-mcp)
@@ -32,6 +33,41 @@ Con dos herramientas:
 
 - **`obtener_informe`**: trae un lote de textos de la IA local todavía sin auditar, con los datos necesarios para juzgarlos.
 - **`enviar_auditoria`**: guarda el veredicto de cada texto (correcto o corregido) y las reglas nuevas. Las correcciones reemplazan el texto en el panel y se marcan "corregida por Claude".
+
+## La forma fácil: el asistente (skill)
+
+El repositorio trae una skill de Claude, `conectar-shinji-soc-mcp`, que hace la conexión por ti. Te pregunta con casillas de opciones dónde usas Claude, cómo entras al panel y tu token. Después busca Python y `server.py`, prueba la conexión antes de registrar nada, registra el servidor MCP y te dice si quedó conectado. Si algo falla, te explica qué significa el error y cómo arreglarlo.
+
+**En Claude Code:**
+
+- Si clonaste el repositorio y abres Claude Code dentro de su carpeta, la skill ya está disponible: escribe `/conectar-shinji-soc-mcp`, o pide "conecta Claude con mi panel Shinji SOC".
+- Para tenerla en cualquier carpeta, cópiala a tus skills personales. Sin clonar el repositorio, basta con descargar un archivo:
+
+  macOS / Linux:
+
+  ```bash
+  mkdir -p ~/.claude/skills/conectar-shinji-soc-mcp && curl -fsSL https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/.claude/skills/conectar-shinji-soc-mcp/SKILL.md -o ~/.claude/skills/conectar-shinji-soc-mcp/SKILL.md
+  ```
+
+  Windows (PowerShell):
+
+  ```powershell
+  New-Item -ItemType Directory -Force "$env:USERPROFILE\.claude\skills\conectar-shinji-soc-mcp" | Out-Null; Invoke-WebRequest https://raw.githubusercontent.com/Andy1218100/Shinji-SOC/main/.claude/skills/conectar-shinji-soc-mcp/SKILL.md -OutFile "$env:USERPROFILE\.claude\skills\conectar-shinji-soc-mcp\SKILL.md"
+  ```
+
+  Claude Code la detecta sin reiniciar; si no aparece, escribe `/reload-skills` ([documentación de Claude Code](https://code.claude.com/docs/en/skills)).
+
+**En la app de Claude** (claude.ai o Claude Desktop): comprime la carpeta `conectar-shinji-soc-mcp` en un ZIP (el ZIP contiene la carpeta, y la carpeta se tiene que llamar igual que la skill) y súbelo en **Customize > Skills > + > Create skill > Upload a skill**. Requiere tener activada la ejecución de código ([centro de ayuda de Claude](https://support.claude.com/en/articles/12512180-using-skills-in-claude)). Ahí Claude no puede ejecutar comandos en tu equipo: te hace las mismas preguntas y te entrega el comando o el bloque de configuración listo para pegar.
+
+Para armar el ZIP desde la carpeta del repositorio (sirve en Windows 10/11, macOS y Linux):
+
+```bash
+tar -a -c -f conectar-shinji-soc-mcp.zip -C .claude/skills conectar-shinji-soc-mcp
+```
+
+En Windows, no uses `Compress-Archive` de PowerShell 5.1: guarda las rutas internas con barras invertidas (`conectar-shinji-soc-mcp\SKILL.md`), y la app puede no encontrar el `SKILL.md`. En macOS y Linux, si tu `tar` no crea ZIP, usa `cd .claude/skills && zip -r ../../conectar-shinji-soc-mcp.zip conectar-shinji-soc-mcp`.
+
+Si prefieres hacerlo a mano, sigue los pasos de abajo.
 
 ## Requisitos
 
@@ -186,6 +222,7 @@ Si el servidor MCP lee el token del `.env` local (Claude en el mismo equipo que 
 |---|---|---|
 | `Falta el token` | El servidor MCP no recibió el token. | Revisa `SHINJI_SOC_AUDIT_TOKEN` en el registro. |
 | `respondio 403: Auditoria externa desactivada` | El panel no tiene token de auditoría. | Genéralo en Configuración (paso 1). |
+| `respondio 403: error code: 1010` | Cloudflare bloquea la identificación de una copia vieja de `server.py` (anterior a la 1.1.0, que se identificaba como `Python-urllib`). | Descarga `server.py` de nuevo (paso 2). |
 | `respondio 401: Token de auditoria invalido` | El token no coincide con el del panel. | Copia de nuevo el valor de `AUDIT_API_TOKEN` del `.env` del servidor. |
 | `No se pudo conectar ... CERTIFICATE_VERIFY_FAILED` | Tu equipo no confía en el certificado del panel. | Con Cloudflare Tunnel no debería pasar: revisa que `SHINJI_SOC_URL` sea tu dominio. Con un certificado propio, usa `SHINJI_SOC_CA_FILE`. |
 | `No se pudo conectar ... Connection refused` o `timed out` | La dirección no es correcta o no se llega al panel. | Usa la misma dirección que en el navegador. Con `SERVER_BIND=127.0.0.1`, `http://IP:8000` solo funciona desde el propio servidor: usa `https://`. |

@@ -16,7 +16,7 @@ Shinji SOC watches Linux servers (Debian, Ubuntu, Proxmox VE) from a web panel t
 - **Attack map:** geolocated origin of each attack, using MaxMind's free GeoLite2 database.
 - **Vulnerabilities:** matches installed packages against [OSV.dev](https://osv.dev) and separates what has a fix from what doesn't.
 - **Local AI:** Ollama (`qwen2.5:3b`) explains events, alerts and vulnerabilities in plain language, with no GPU and no external service. Claude is optional.
-- **AI audit with Claude (MCP):** an MCP server lets Claude Code or Claude Desktop review and correct the local AI's text using your Claude plan (no Anthropic API key), with minimized data. See the [MCP guide](docs/MCP.md).
+- **AI audit with Claude (MCP):** an MCP server lets Claude Code or Claude Desktop review and correct the local AI's text using your Claude plan (no Anthropic API key), with minimized data. The repository includes a Claude skill, `/conectar-shinji-soc-mcp`, that sets up the connection step by step with multiple-choice questions. See the [MCP guide](docs/MCP.md).
 - **Notifications:** Telegram, ntfy or email.
 - **Accounts with mandatory MFA:** super admin, admin and read-only roles; single-use recovery codes.
 - **Operations:** HTTPS publishing through Cloudflare Tunnel (no open ports), automatic updates from GitHub, automatic backups, data retention and configuration from the panel itself.
