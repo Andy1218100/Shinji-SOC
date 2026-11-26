@@ -19,6 +19,32 @@ class LogBatchIn(BaseModel):
     entries: list[LogEntryIn]
 
 
+class WafRuleIn(BaseModel):
+    id: str = Field(max_length=12)
+    msg: str = Field(default="", max_length=160)
+    severity: str | None = Field(default=None, max_length=12)
+    attack: str | None = Field(default=None, max_length=32)
+    data: str | None = Field(default=None, max_length=200)
+
+
+class WafEntryIn(BaseModel):
+    """Una peticion que supero el umbral del WAF (agent/waf_watch.py)."""
+    ts: datetime | None = None
+    ip: str = Field(max_length=64)
+    method: str | None = Field(default=None, max_length=16)
+    uri: str | None = Field(default=None, max_length=500)
+    host: str | None = Field(default=None, max_length=200)
+    status_code: int | None = None
+    blocked: bool = False
+    score: int | None = None
+    rules: list[WafRuleIn] = Field(default_factory=list, max_length=8)
+
+
+class WafBatchIn(BaseModel):
+    mode: str | None = Field(default=None, pattern="^(deteccion|bloqueo)$")
+    entries: list[WafEntryIn] = Field(default_factory=list, max_length=1000)
+
+
 class AuthEventIn(BaseModel):
     ts: datetime | None = None
     service: str = Field(pattern="^(ssh|pve)$")
@@ -81,6 +107,9 @@ class SystemReportIn(BaseModel):
     # el formato combined). Se informan para que se vea que existen.
     other_log_paths: list[str] = []
     other_log_paths_total: int = 0
+    # WAF opcional (agent/waf.sh), si esta instalado en el host.
+    waf_mode: str | None = None
+    waf_sites: list[str] = []
     # Encontrados por el escaneo de logs pero que el agente no puede leer
     # (unreadable_log_paths) o ni siquiera listar (denied_log_dirs, tipico
     # de apps que guardan todo bajo un directorio con permisos cerrados,

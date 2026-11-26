@@ -39,18 +39,18 @@ def is_access_line(line: str) -> bool:
     return bool(_COMBINED_RE.match(line.strip()))
 
 
-def _load_state() -> dict:
-    if os.path.exists(STATE_PATH):
+def _load_state(state_path: str) -> dict:
+    if os.path.exists(state_path):
         try:
-            with open(STATE_PATH, "r", encoding="utf-8") as fh:
+            with open(state_path, "r", encoding="utf-8") as fh:
                 return json.load(fh)
         except (OSError, ValueError):
             return {}
     return {}
 
 
-def _save_state(state: dict) -> None:
-    with open(STATE_PATH, "w", encoding="utf-8") as fh:
+def _save_state(state_path: str, state: dict) -> None:
+    with open(state_path, "w", encoding="utf-8") as fh:
         json.dump(state, fh)
 
 
@@ -92,7 +92,14 @@ def _parse_line(line: str) -> dict | None:
 def read_new_entries(log_paths: list[str], max_entries: int = MAX_ENTRIES_PER_READ) -> list[dict]:
     """Lineas nuevas de cada archivo desde la ultima lectura. Si devuelve
     max_entries, quedan mas por leer: volver a llamar."""
-    state = _load_state()
+    return tail(log_paths, STATE_PATH, _parse_line, max_entries)
+
+
+def tail(log_paths: list[str], state_path: str, parse, max_entries: int) -> list[dict]:
+    """Lee las lineas completas nuevas de cada archivo y devuelve las que
+    parse() convierte (las que devuelven None se descartan). Lo usa tambien
+    waf_watch, con su propio archivo de estado."""
+    state = _load_state(state_path)
     entries: list[dict] = []
 
     for path in log_paths:
@@ -125,7 +132,7 @@ def read_new_entries(log_paths: list[str], max_entries: int = MAX_ENTRIES_PER_RE
                         # Linea a medio escribir: se lee completa la proxima vez.
                         fh.seek(-len(raw), os.SEEK_CUR)
                         break
-                    parsed = _parse_line(raw.decode("utf-8", errors="replace").strip())
+                    parsed = parse(raw.decode("utf-8", errors="replace").strip())
                     if parsed:
                         entries.append(parsed)
                 new_offset = fh.tell()
@@ -134,5 +141,5 @@ def read_new_entries(log_paths: list[str], max_entries: int = MAX_ENTRIES_PER_RE
 
         state[path] = {"inode": st.st_ino, "offset": new_offset}
 
-    _save_state(state)
+    _save_state(state_path, state)
     return entries

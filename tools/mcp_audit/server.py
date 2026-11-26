@@ -66,6 +66,7 @@ eventos (resumen de un evento de seguridad):
 - process_anomaly: juzgar con "senales_intrusion" / "senales_legitimo"; un proceso lanzado por systemd sin senales de intrusion no es un ataque. La accion es terminar el proceso, no bloquear una IP.
 - Fuerza bruta: muchos usuarios distintos o root sugieren ataque automatizado. Decir claramente si conviene la "accion_sugerida".
 - new_listener / service_outbound / malicious_connection: conexiones vistas por el agente. Un shell o interprete escuchando o saliendo es muy sospechoso; un servicio conocido en su puerto habitual suele ser legitimo. La accion es terminar el proceso, no bloquear una IP.
+- waf_attack: peticiones que superaron el umbral de las reglas OWASP CRS. "bloqueadas" dice cuantas se cortaron (las demas llegaron a la app); "modo_waf" es el modo actual. Varias rutas con inyecciones o archivos del sistema sugieren un escaner o ataque; una sola regla repetida en una ruta propia de la app puede ser un falso positivo.
 - Si "ip_de_proxy" es true, la IP es de Cloudflare o de un tunel: no recomendar bloquearla.
 
 informes (lectura del informe del host):

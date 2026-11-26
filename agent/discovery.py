@@ -18,6 +18,7 @@ import re
 import psutil
 
 import log_tailer
+import waf_watch
 
 logger = logging.getLogger("discovery")
 
@@ -364,6 +365,11 @@ def full_report() -> dict:
     report["log_paths"] = log_info["readable"]
     report["other_log_paths"] = log_info["other"][:200]
     report["other_log_paths_total"] = len(log_info["other"])
+    # WAF opcional (waf.sh): modo y sitios, para mostrarlos en el panel.
+    waf_mode = waf_watch.mode()
+    if waf_mode:
+        report["waf_mode"] = waf_mode
+        report["waf_sites"] = waf_watch.sites()
     report["unreadable_log_paths"] = log_info["unreadable"]
     report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()

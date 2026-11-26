@@ -372,6 +372,9 @@ async function loadSystemReport() {
     </div>
     ${tagGroup("Servicios detectados", r.services || [], "Ninguno reconocido.")}
     ${tagGroup("Puertos en escucha", ports, "Ninguno detectado.")}
+    ${r.waf_mode ? tagGroup(
+      `WAF (OWASP CRS) en modo ${r.waf_mode === "bloqueo" ? "bloqueo" : "solo deteccion"}: sitios protegidos`,
+      r.waf_sites || [], "Instalado, sin sitios: shinji-soc-waf agregar NOMBRE PUERTO DESTINO") : ""}
     ${tagGroup("Logs de acceso web que vigila", r.log_paths || [], "No encontro logs de acceso web (nginx/Apache).")}
     ${(r.other_log_paths || []).length ? tagGroup(
       "Otros logs encontrados que no se leen (no son de acceso web)"

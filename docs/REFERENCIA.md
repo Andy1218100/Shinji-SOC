@@ -51,6 +51,7 @@ El motor es **heurístico**: reglas y conteos en ventanas de tiempo, no un model
 | Puerto nuevo en escucha | Un puerto que no estaba abierto empieza a escuchar (posible puerta trasera) | crítica si es un shell o intérprete |
 | Salida de una cuenta de servicio | Una cuenta de servicio abre una conexión a una IP pública en un puerto poco común (posible *reverse shell*) | crítica si es un shell o intérprete |
 | Conexión a red maliciosa | Una conexión saliente a una red de Spamhaus DROP | crítica |
+| Ataque web (WAF) | El WAF opcional ([WAF.md](WAF.md)) detecta peticiones que superan el umbral de OWASP CRS; un evento por IP mientras siga abierto | crítica si hay inyección SQL, comandos, inclusión de archivos o XSS |
 
 Los umbrales se ajustan en **Configuración > Detección de intrusos**.
 
@@ -91,7 +92,7 @@ Para que el log traiga la IP real:
   ```
 
 - **Apache:** `mod_remoteip` con `RemoteIPHeader CF-Connecting-IP` y `%a` en el `LogFormat` (misma fuente).
-- **Aplicaciones con su propio servidor web** (por ejemplo, el panel de AMP): el agente solo entiende logs en formato *combined*; si la aplicación no los escribe, sus pedidos no llegan al detector web. Poner un nginx delante con su log de acceso lo resuelve. Las conexiones (sección anterior) sí se vigilan igual.
+- **Aplicaciones con su propio servidor web** (por ejemplo, el panel de AMP): el agente solo entiende logs en formato *combined*; si la aplicación no los escribe, sus pedidos no llegan al detector web. El WAF opcional ([WAF.md](WAF.md)) lo resuelve: escribe ese log con la IP real. Las conexiones (sección anterior) sí se vigilan igual.
 
 ## Eventos de seguridad y bloqueos
 

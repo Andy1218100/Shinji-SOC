@@ -15,6 +15,7 @@
 - discovery_loop: repite el descubrimiento una vez al dia (por si se
   instala un servicio nuevo despues) y reenvia el informe.
 - commands_loop: ejecuta bloqueos/kills aprobados desde el panel.
+- waf_loop: lo que detecta el WAF opcional (waf.sh), si esta instalado.
 
 Corre sin privilegios salvo las acciones puntuales de commands.py, que
 usan sudo acotado (ver sudoers/shinji-soc-agent).
@@ -35,6 +36,7 @@ import auth_watch
 import log_tailer
 import metrics
 import process_watch
+import waf_watch
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("agent")
@@ -167,6 +169,34 @@ async def connections_loop(client: httpx.AsyncClient, base_url: str, headers: di
         await asyncio.sleep(interval)
 
 
+async def waf_loop(client: httpx.AsyncClient, base_url: str, headers: dict) -> None:
+    """Lo que detecta el WAF opcional (agent/waf.sh). Si no esta instalado,
+    revisa cada minuto por si se instala despues."""
+    announced = False
+    while True:
+        try:
+            if waf_watch.available():
+                if not announced:
+                    logger.info("Leyendo lo que detecta el WAF desde %s", waf_watch.AUDIT_LOG)
+                    announced = True
+                while True:
+                    entries = await asyncio.to_thread(waf_watch.read_new_entries)
+                    if entries:
+                        resp = await client.post(
+                            f"{base_url}/api/v1/waf/ingest",
+                            json={"mode": waf_watch.mode(), "entries": entries}, headers=headers,
+                        )
+                        if resp.status_code == 404:
+                            logger.warning("El panel no recibe eventos del WAF (version anterior); se desactiva")
+                            return
+                        resp.raise_for_status()
+                    if len(entries) < waf_watch.MAX_ENTRIES_PER_READ:
+                        break
+        except Exception:
+            logger.exception("Fallo enviando lo detectado por el WAF")
+        await asyncio.sleep(10 if waf_watch.available() else 60)
+
+
 async def commands_loop(
     client: httpx.AsyncClient, base_url: str, headers: dict, interval: int, fail2ban_jail: str
 ) -> None:
@@ -218,6 +248,7 @@ async def main() -> None:
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
             discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"], watch, bool(cfg["log_paths"])),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
+            waf_loop(client, base_url, headers),
             *([connections_loop(client, base_url, headers, int(conn_cfg.get("interval_seconds", 60)))]
               if conn_cfg.get("enabled", True) else []),
         )

@@ -135,6 +135,10 @@ sudo systemctl restart shinji-soc-agent
 
 Lo que fijes ahí gana sobre lo que el agente detecta solo.
 
+### WAF opcional
+
+El agente deja instalado el comando `shinji-soc-waf`, que pone un firewall de aplicaciones web (nginx + ModSecurity + OWASP CRS) delante de tus sitios. No se activa solo: ver [WAF.md](WAF.md).
+
 ## Reinstalar, actualizar o cambiar la dirección del panel
 
 El instalador se puede volver a correr sobre una instalación existente: reemplaza el código y la dirección del panel y la API key por las que le pases, y conserva tu `config.yaml`.

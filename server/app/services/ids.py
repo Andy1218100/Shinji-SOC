@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.models.host import Host
 from app.core.db import SessionLocal
 from app.models.security import AuthAttempt, IngestedRequest, SecurityEvent
-from app.schemas.logs import AuthEventIn, LogEntryIn
+from app.schemas.logs import AuthEventIn, LogEntryIn, WafBatchIn, WafEntryIn
 from app.services import ai, audit, geoip, netlists, notify
 from app.services.event_bus import security_events_bus
 
@@ -40,6 +40,7 @@ KIND_LABELS = {
     "new_listener": "puerto nuevo en escucha",
     "service_outbound": "conexion saliente de una cuenta de servicio",
     "malicious_connection": "conexion a una red maliciosa conocida",
+    "waf_attack": "ataque web detectado por el WAF",
 }
 ACTION_LABELS = {"block_ip": "bloquear la IP", "kill_process": "terminar el proceso"}
 
@@ -159,6 +160,22 @@ def build_event_prompt(host: Host, kind: str, source_ip: str, detail: dict, sugg
             f"{_quoted(detail.get('user'), 64)}. Esa IP esta en una lista publica de redes maliciosas "
             f"({_quoted(detail.get('lista_de_amenazas'), 80)}). Puede ser un equipo infectado que contacta a su "
             "servidor de control, o un falso positivo si esa red cambio de dueno."
+        )
+    elif kind == "waf_attack":
+        attacks = ", ".join(detail.get("attack_types") or []) or "sin categoria"
+        rules = "; ".join(_quoted(r, 90) for r in (detail.get("top_rules") or [])[:4]) or "ninguna"
+        hits, blocked = int(detail.get("hits") or 0), int(detail.get("blocked") or 0)
+        mode = "bloqueo" if detail.get("mode") == "bloqueo" else "solo deteccion"
+        outcome = ("todas se bloquearon con un 403" if blocked >= hits else
+                   "ninguna se bloqueo: llegaron a la aplicacion" if blocked == 0 else
+                   f"{blocked} se bloquearon con un 403 y las demas llegaron a la aplicacion")
+        facts = (
+            f"El WAF del host '{host.name}' (reglas OWASP CRS, ahora en modo {mode}) detecto {hits} peticiones "
+            f"de la IP {source_ip} que superaron el umbral de ataque; {outcome}. Tipos de ataque segun las reglas: {attacks}. "
+            f"Reglas que coincidieron: {rules}. Ejemplo de peticion: {_quoted(detail.get('sample_uri'), 120)}. "
+            "Las reglas CRS tienen falsos positivos con algunas aplicaciones (formularios con codigo, editores, "
+            "APIs con JSON complejo); muchas peticiones distintas con inyecciones o rutas del sistema sugieren un "
+            "escaner o un ataque real."
         )
     elif kind == "brute_force":
         facts = (
@@ -362,6 +379,77 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
 
 
 SERVICE_LABEL = {"ssh": "SSH", "pve": "la interfaz web de Proxmox"}
+
+
+# Por evento abierto de una IP se guardan pocas muestras: la evidencia
+# completa queda en el registro del WAF en el host.
+WAF_SAMPLES = 5
+WAF_TOP_RULES = 6
+# Peticiones bloqueadas o de estos tipos -> critico; el resto (protocolo,
+# escaneres) -> advertencia.
+WAF_CRITICAL_ATTACKS = {"sqli", "rce", "lfi", "rfi", "injection-php", "injection-java", "xss", "fixation"}
+
+
+def _waf_severity(entries: list[WafEntryIn]) -> str:
+    for e in entries:
+        if any((r.attack or "") in WAF_CRITICAL_ATTACKS for r in e.rules):
+            return "critical"
+    return "warning"
+
+
+def _merge_waf_detail(detail: dict, entries: list[WafEntryIn], mode: str | None) -> dict:
+    detail = dict(detail)
+    detail["hits"] = int(detail.get("hits") or 0) + len(entries)
+    detail["blocked"] = int(detail.get("blocked") or 0) + sum(1 for e in entries if e.blocked)
+    if mode:
+        detail["mode"] = mode
+    counts: dict[str, int] = dict(detail.get("rule_counts") or {})
+    labels: dict[str, str] = dict(detail.get("rule_labels") or {})
+    attacks = set(detail.get("attack_types") or [])
+    for e in entries:
+        for r in e.rules:
+            counts[r.id] = counts.get(r.id, 0) + 1
+            labels.setdefault(r.id, r.msg[:120])
+            if r.attack:
+                attacks.add(r.attack)
+    top = sorted(counts, key=lambda k: -counts[k])[:WAF_TOP_RULES]
+    detail["rule_counts"] = {k: counts[k] for k in top}
+    detail["rule_labels"] = {k: labels.get(k, "") for k in top}
+    detail["top_rules"] = [f"{k} {labels.get(k, '')} (x{counts[k]})" for k in top]
+    detail["attack_types"] = sorted(attacks)[:10]
+    samples = list(detail.get("samples") or [])
+    for e in entries:
+        samples.append({
+            "ts": e.ts.isoformat() if e.ts else None, "method": e.method, "uri": (e.uri or "")[:300],
+            "host": e.host, "status": e.status_code, "blocked": e.blocked, "score": e.score,
+            "rules": [r.id for r in e.rules][:8],
+        })
+    detail["samples"] = samples[-WAF_SAMPLES:]
+    detail["sample_uri"] = detail["samples"][-1]["uri"] if detail["samples"] else None
+    return detail
+
+
+async def process_waf_entries(session: AsyncSession, host: Host, payload: WafBatchIn) -> None:
+    """Un evento abierto por IP: las peticiones nuevas de esa IP se suman al
+    mismo evento (sin repetir la notificacion) hasta que se aprueba o
+    descarta en el panel."""
+    by_ip: dict[str, list[WafEntryIn]] = {}
+    for entry in payload.entries:
+        ip = entry.ip.strip()
+        if ip:
+            by_ip.setdefault(ip, []).append(entry)
+    for ip, entries in by_ip.items():
+        event = await _open_event(session, host.id, "waf_attack", ip)
+        if event is not None:
+            event.detail = _merge_waf_detail(event.detail or {}, entries, payload.mode)
+            severity = _waf_severity(entries)
+            if severity == "critical" and event.severity != "critical":
+                event.severity = "critical"
+            await session.commit()
+            security_events_bus.publish({"event_id": str(event.id)})
+            continue
+        detail = _merge_waf_detail({}, entries, payload.mode)
+        await create_event(session, host, "waf_attack", ip, detail, severity=_waf_severity(entries))
 
 
 async def process_auth_events(session: AsyncSession, host: Host, entries: list[AuthEventIn]) -> None:

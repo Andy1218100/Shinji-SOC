@@ -14,7 +14,7 @@ class SecurityEvent(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     host_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("hosts.id"), index=True)
 
-    kind: Mapped[str] = mapped_column(String(32))  # path_scan | brute_force | process_anomaly | ssh_brute_force | pve_brute_force | login_after_failures
+    kind: Mapped[str] = mapped_column(String(32))  # path_scan | brute_force | process_anomaly | ssh_brute_force | pve_brute_force | login_after_failures | new_listener | service_outbound | malicious_connection | waf_attack
     severity: Mapped[str] = mapped_column(String(16), default="warning")  # info|warning|critical
     source_ip: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     detail: Mapped[dict] = mapped_column(JSON, default=dict)  # evidencia cruda (rutas, cmdline, etc.)

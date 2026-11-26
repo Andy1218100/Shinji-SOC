@@ -54,6 +54,12 @@ def _build_prompt(host: Host, payload: SystemReportIn) -> str:
            "de acceso web (del sistema o de aplicaciones): no se leen, porque el detector solo entiende logs de "
            "acceso de nginx/Apache." if (payload.other_log_paths_total or payload.other_log_paths) else "")
     )
+    if payload.waf_mode:
+        lines.append(
+            f"Tiene el WAF de Shinji SOC (nginx con reglas OWASP CRS) en modo "
+            f"{'bloqueo' if payload.waf_mode == 'bloqueo' else 'solo deteccion, que registra sin bloquear'}, "
+            f"protegiendo: {_join_capped(payload.waf_sites, 10, 'ningun sitio todavia')}."
+        )
     if payload.unreadable_log_paths:
         lines.append(
             f"Logs que se encontraron pero el agente NO tiene permiso de leer "

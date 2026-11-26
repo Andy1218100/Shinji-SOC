@@ -8,7 +8,8 @@ from app.api.deps import get_current_host
 from app.core.db import get_db
 from app.models.host import Host
 from app.models.vulnerability import InstalledPackage
-from app.schemas.logs import AuthEventBatchIn, ConnectionsIn, InventoryIn, LogBatchIn, ProcessEventBatchIn, SystemReportIn
+from app.schemas.logs import (AuthEventBatchIn, ConnectionsIn, InventoryIn, LogBatchIn, ProcessEventBatchIn,
+                              SystemReportIn, WafBatchIn)
 from app.services import conn_watch, ids, process_anomaly, system_report, vuln_scan
 
 router = APIRouter(prefix="/api/v1", tags=["security-ingest"])
@@ -43,6 +44,16 @@ async def ingest_connections(
     await conn_watch.process_connections(db, host, payload)
     return {"status": "ok", "outbound": len(payload.outbound),
             "listeners": None if payload.listeners is None else len(payload.listeners)}
+
+
+@router.post("/waf/ingest", status_code=201)
+async def ingest_waf(
+    payload: WafBatchIn,
+    host: Host = Depends(get_current_host),
+    db: AsyncSession = Depends(get_db),
+):
+    await ids.process_waf_entries(db, host, payload)
+    return {"status": "ok", "received": len(payload.entries)}
 
 
 @router.post("/process-events/ingest", status_code=201)

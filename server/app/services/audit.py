@@ -256,6 +256,11 @@ def _event_facts(e: SecurityEvent, hosts, aliases) -> dict:
     elif e.kind in ("service_outbound", "malicious_connection"):
         facts.update({"puerto_remoto": d.get("remote_port"), "cuenta": d.get("user"),
                       "proceso": scrub_event_text(str(d.get("cmdline") or d.get("process") or "")[:CMDLINE_CHARS], hosts, aliases)})
+    elif e.kind == "waf_attack":
+        facts.update({"peticiones": d.get("hits"), "bloqueadas": d.get("blocked"), "modo_waf": d.get("mode"),
+                      "tipos_de_ataque": d.get("attack_types"),
+                      "reglas": [scrub_event_text(str(r)[:120], hosts, aliases) for r in (d.get("top_rules") or [])[:6]],
+                      "ruta_ejemplo": scrub_event_text(str(d.get("sample_uri") or "")[:CMDLINE_CHARS], hosts, aliases)})
     elif "path" in d:
         facts.update({"ruta": scrub_event_text(str(d.get("path"))[:CMDLINE_CHARS], hosts, aliases), "metodo": d.get("method")})
     else:
@@ -300,6 +305,8 @@ def _report_facts(raw: dict, hosts, aliases) -> dict:
         "servicios": (raw.get("services") or [])[:20],
         "puertos": ports[:25],
         "logs_vigilados": len(raw.get("log_paths") or []),
+        "otros_logs_no_leidos": raw.get("other_log_paths_total") or len(raw.get("other_log_paths") or []),
+        "waf": {"modo": raw.get("waf_mode"), "sitios": len(raw.get("waf_sites") or [])} if raw.get("waf_mode") else None,
         "logs_sin_permiso": [scrub(p, hosts, aliases) for p in (raw.get("unreadable_log_paths") or [])[:10]],
         "carpetas_sin_acceso": [scrub(p, hosts, aliases) for p in (raw.get("denied_log_dirs") or [])[:10]],
         "cuentas_de_servicio": (raw.get("service_accounts") or [])[:15],

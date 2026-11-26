@@ -219,5 +219,12 @@ else
   done
   echo "Agente quitado de $(hostname)."
   echo "Los paquetes (python3-venv, fail2ban, acl, sudo) quedan instalados."
+  # El WAF sigue protegiendo los sitios aunque se quite el agente: su
+  # comando queda para poder quitarlo despues (shinji-soc-waf desinstalar).
+  if [ -d /etc/shinji-soc-waf ]; then
+    echo "El WAF sigue activo; para quitarlo: sudo shinji-soc-waf desinstalar"
+  else
+    rm -f /usr/local/sbin/shinji-soc-waf
+  fi
   echo "Para borrar tambien el host y su historial del panel: Monitoreo > el host > Eliminar (pide MFA)."
 fi

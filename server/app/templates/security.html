@@ -74,8 +74,21 @@ const KIND_LABELS = {
   new_listener: 'Puerto nuevo en escucha',
   service_outbound: 'Salida de una cuenta de servicio',
   malicious_connection: 'Conexion a red maliciosa',
+  waf_attack: 'Ataque web (WAF)',
 };
 const kindLabel = (k) => KIND_LABELS[k] || k;
+// Datos del WAF bajo el resumen: los IDs de reglas sirven para escribir
+// exclusiones si es un falso positivo (docs/WAF.md).
+function wafFacts(ev) {
+  if (ev.kind !== 'waf_attack' || !ev.detail) return '';
+  const d = ev.detail;
+  const rules = Object.keys(d.rule_counts || {}).join(', ');
+  return `<div style="color: var(--text-muted); font-size: var(--text-xs); margin-top: 4px;">`
+    + `${esc(d.hits)} peticiones, ${esc(d.blocked || 0)} bloqueadas`
+    + (rules ? ` · reglas ${esc(rules)}` : '')
+    + (d.sample_uri ? ` · ejemplo: <code>${esc(String(d.sample_uri).slice(0, 120))}</code>` : '')
+    + `</div>`;
+}
 const severityClass = { critical: 'crit', warning: 'warn', info: 'ok' };
 // Todo lo que viene de la API se escapa: el resumen de IA sale de un prompt
 // con user-agents y rutas que manda cualquiera desde internet (inyeccion
@@ -285,7 +298,7 @@ async function loadEvents() {
         <td>${esc(kindLabel(ev.kind))}</td>
         <td><span class="badge ${sev}">${esc(ev.severity)}</span></td>
         <td>${esc(ev.source_ip || '-')}${esc(geo)}</td>
-        <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}${auditBadge(ev)}</td>
+        <td>${ev.ai_summary ? esc(ev.ai_summary) : '<span style="color:var(--text-muted)">pendiente</span>'}${wafFacts(ev)}${auditBadge(ev)}</td>
         <td>${actions}</td>
       </tr>`;
   }).join('');
