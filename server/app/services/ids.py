@@ -291,10 +291,15 @@ async def process_log_entries(session: AsyncSession, host: Host, entries: list[L
         ip, unresolved = netlists.resolve_client(entry.ip, entry.forwarded_for)
         if not unresolved:
             countable.add(ip)
+        # Sin zona horaria (agentes anteriores) la hora era la local del host
+        # tomada como UTC: en un host con hora de Chile quedaba 3 horas atras y
+        # la fuerza bruta no se contaba. El agente lee cada 10 s, asi que la
+        # hora de llegada es casi la misma.
+        ts = entry.ts if entry.ts is not None and entry.ts.tzinfo is not None else now
         session.add(
             IngestedRequest(
                 host_id=host.id,
-                ts=entry.ts or now,
+                ts=ts,
                 ip=ip,
                 method=entry.method,
                 path=entry.path,

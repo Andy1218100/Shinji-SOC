@@ -54,7 +54,7 @@ El motor es **heurístico**: reglas y conteos en ventanas de tiempo, no un model
 
 Los umbrales se ajustan en **Configuración > Detección de intrusos**.
 
-- **Logs web:** el agente lee los logs de acceso en formato *combined* de nginx/apache. Las líneas con otro formato se ignoran sin error.
+- **Logs web:** el agente lee los logs de acceso en formato *combined* de nginx/apache, con la hora y su zona horaria. Solo vigila los archivos que tienen ese formato; el resto de los logs encontrados se listan en la página del servidor pero no se leen (ver [AGENTE.md](AGENTE.md#qué-logs-lee)). Las líneas con otro formato se ignoran sin error.
 - **Inicios de sesión:** salen del journal de systemd (`journalctl`), o de `/var/log/auth.log` si existe. Proxmox VE 8 en adelante no trae rsyslog ni `auth.log`. El agente manda solo los datos ya extraídos (cuándo, servicio, resultado, usuario, IP), nunca las líneas del log.
 
 ## Conexiones del host

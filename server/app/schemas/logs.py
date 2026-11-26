@@ -77,6 +77,10 @@ class SystemReportIn(BaseModel):
     services: list[str] = []
     listening_ports: list[ListeningPortIn] = []
     log_paths: list[str] = []
+    # Logs encontrados que no son de acceso web: no se leen (el IDS solo usa
+    # el formato combined). Se informan para que se vea que existen.
+    other_log_paths: list[str] = []
+    other_log_paths_total: int = 0
     # Encontrados por el escaneo de logs pero que el agente no puede leer
     # (unreadable_log_paths) o ni siquiera listar (denied_log_dirs, tipico
     # de apps que guardan todo bajo un directorio con permisos cerrados,

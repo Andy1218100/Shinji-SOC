@@ -435,8 +435,11 @@ import logging
 import os
 import platform
 import pwd
+import re
 
 import psutil
+
+import log_tailer
 
 logger = logging.getLogger("discovery")
 
@@ -497,7 +500,21 @@ LOG_SCAN_MAX_DEPTH = 10
 # Peor caso si las 5 fueran igual de grandes: 5 x 200.000 ~ 20s a la
 # velocidad medida arriba -- aceptable para algo que corre 1 vez al dia.
 LOG_SCAN_MAX_DIRS_PER_ROOT = 200_000
-LOG_SCAN_MAX_RESULTS = 100
+# Candidatos, antes de revisar su contenido. Era 100 y se llenaba con logs
+# comprimidos, rotados y del sistema: en un /var/log normal quedaban afuera
+# los logs de acceso que si sirven (comprobado en un Debian de prueba).
+LOG_SCAN_MAX_RESULTS = 1000
+# Nunca son logs de texto que crezcan: comprimidos, rotados, binarios.
+NOT_TEXT_LOG_SUFFIXES = (".gz", ".xz", ".bz2", ".zst", ".zip", ".lz4", ".7z", ".tar", ".journal", ".journal~")
+BINARY_LOG_NAMES = {"wtmp", "btmp", "utmp", "lastlog", "faillog"}
+_ROTATED_RE = re.compile(r"\.\d+$|[-_.]\d{8}$")  # access.log.1, syslog-20261120
+# Carpetas de servidores web: un log ahi (o con "access" en el nombre) se
+# vigila aunque todavia este vacio o no se pueda leer.
+WEB_LOG_DIR_NAMES = {"nginx", "apache2", "apache", "httpd", "caddy", "traefik", "lighttpd", "haproxy"}
+# Para decidir si un archivo es un log de acceso web se revisan sus ultimas
+# lineas: basta una en formato combined.
+CLASSIFY_TAIL_BYTES = 64 * 1024
+CLASSIFY_MAX_LINES = 200
 # Carpetas que nunca tiene sentido recorrer buscando logs de aplicacion:
 # son potencialmente enormes y lo unico que van a aportar es ruido
 # repetido. El caso real que motivo esto: el storage de imagenes de
@@ -583,6 +600,36 @@ def _looks_like_log(filename: str) -> bool:
     return any(marker in lowered for marker in LOG_FILENAME_MARKERS)
 
 
+def _is_rotated_or_binary(path: str) -> bool:
+    name = os.path.basename(path).lower()
+    return name in BINARY_LOG_NAMES or name.endswith(NOT_TEXT_LOG_SUFFIXES) or bool(_ROTATED_RE.search(name))
+
+
+def _looks_like_web_log(path: str) -> bool:
+    name = os.path.basename(path).lower()
+    parent = os.path.basename(os.path.dirname(path)).lower()
+    return "access" in name or parent in WEB_LOG_DIR_NAMES
+
+
+def classify_log(path: str) -> bool | None:
+    """True si las ultimas lineas tienen formato combined (log de acceso
+    web, lo unico que usa el IDS), False si no, None si esta vacio."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - CLASSIFY_TAIL_BYTES))
+            chunk = fh.read()
+    except OSError:
+        return None
+    if b"\x00" in chunk[:4096]:
+        return False  # binario
+    lines = [ln for ln in chunk.decode("utf-8", errors="replace").splitlines() if ln.strip()]
+    if not lines:
+        return None
+    return any(log_tailer.is_access_line(ln) for ln in lines[-CLASSIFY_MAX_LINES:])
+
+
 def _should_skip_dir(dirpath: str) -> bool:
     normalized = dirpath.replace("\\", "/") + "/"
     return any(marker in normalized for marker in LOG_SCAN_SKIP_MARKERS)
@@ -653,6 +700,8 @@ def _scan_for_log_files() -> tuple[list[str], list[str]]:
                     if not (_looks_like_log(filename) or in_log_dir):
                         continue
                     full_path = os.path.join(dirpath, filename)
+                    if _is_rotated_or_binary(full_path):
+                        continue
                     if os.path.isfile(full_path) and not os.path.islink(full_path):
                         found.add(full_path)
         except Exception:
@@ -671,6 +720,7 @@ def detect_log_paths() -> dict:
     scanned, denied_dirs = _scan_for_log_files()
     candidates.update(scanned)
 
+    fixed = {p for paths in WEB_SERVER_LOG_CANDIDATES.values() for p in paths}
     # Encontrar un archivo (listar la carpeta que lo contiene) y poder leer
     # su contenido son dos permisos distintos en Linux -- hay que chequear
     # los dos para no vigilar a ciegas algo que el agente no va a poder
@@ -678,7 +728,22 @@ def detect_log_paths() -> dict:
     readable = sorted(p for p in candidates if os.access(p, os.R_OK))
     unreadable = sorted(candidates - set(readable))
 
-    return {"readable": readable, "unreadable": unreadable, "denied_dirs": denied_dirs}
+    # Solo se vigilan los logs de acceso web: el IDS descarta cualquier otra
+    # linea, asi que leer logs de juegos o del sistema era trabajo perdido
+    # (y el informe los mostraba como "vigilados"). Un log vacio se vigila
+    # si por nombre o carpeta parece de un servidor web.
+    access, other = [], []
+    for path in readable:
+        kind = classify_log(path)
+        if kind or (kind is None and (path in fixed or _looks_like_web_log(path))):
+            access.append(path)
+        else:
+            other.append(path)
+    # Sin permiso no se puede revisar el contenido: se ofrece "Dar acceso"
+    # solo a los que parecen de un servidor web.
+    unreadable_web = [p for p in unreadable if p in fixed or _looks_like_web_log(p)]
+
+    return {"readable": access, "other": other, "unreadable": unreadable_web, "denied_dirs": denied_dirs}
 
 
 def _is_system_account(entry: pwd.struct_passwd) -> bool:
@@ -719,6 +784,8 @@ def full_report() -> dict:
     report["listening_ports"] = detect_listening_ports()
     log_info = detect_log_paths()
     report["log_paths"] = log_info["readable"]
+    report["other_log_paths"] = log_info["other"][:200]
+    report["other_log_paths_total"] = len(log_info["other"])
     report["unreadable_log_paths"] = log_info["unreadable"]
     report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()
@@ -980,9 +1047,12 @@ cat > "$INSTALL_DIR/log_tailer.py" <<'SHINJISOC_EMBED_7_EOF'
 y las devuelve como entradas estructuradas para mandar al servidor.
 
 Guarda el offset leido de cada archivo en un state file (JSON) para no
-reprocesar todo el log en cada reinicio del agente, y para tolerar rotacion
-de logs (si el inodo cambia, se asume rotacion y se arranca desde el inicio
-del archivo nuevo).
+reprocesar todo el log en cada reinicio del agente, y para tolerar
+rotacion de logs:
+- si el inodo cambia (logrotate "create"), el archivo nuevo se lee desde
+  el inicio;
+- si el archivo quedo mas chico que lo ya leido (logrotate "copytruncate":
+  mismo archivo, vaciado), tambien.
 """
 
 import json
@@ -993,6 +1063,9 @@ from datetime import datetime
 STATE_PATH = os.environ.get(
     "SHINJI_SOC_LOG_STATE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "log_state.json")
 )
+# Tope de entradas por lectura: tras horas con el agente detenido, el atraso
+# se manda en varias partes y no en un solo envio enorme.
+MAX_ENTRIES_PER_READ = 5000
 
 _COMBINED_RE = re.compile(
     r'^(?P<ip>\S+) \S+ \S+ \[(?P<time>[^\]]+)\] '
@@ -1005,10 +1078,19 @@ _COMBINED_RE = re.compile(
 _TRAILING_QUOTED_RE = re.compile(r'"([^"]*)"')
 
 
+def is_access_line(line: str) -> bool:
+    """La linea tiene formato combined (lo usa discovery para decidir que
+    archivos son logs de acceso web)."""
+    return bool(_COMBINED_RE.match(line.strip()))
+
+
 def _load_state() -> dict:
     if os.path.exists(STATE_PATH):
-        with open(STATE_PATH, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+        try:
+            with open(STATE_PATH, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (OSError, ValueError):
+            return {}
     return {}
 
 
@@ -1017,23 +1099,32 @@ def _save_state(state: dict) -> None:
         json.dump(state, fh)
 
 
+def _parse_time(text: str) -> str | None:
+    """'26/Nov/2026:10:00:00 -0300' -> '2026-11-26T10:00:00-03:00'.
+
+    Con la zona: sin ella, el servidor tomaba la hora local como UTC y en un
+    host con hora de Chile las peticiones quedaban 3 horas en el pasado,
+    fuera de la ventana de conteo (la fuerza bruta web no se detectaba)."""
+    for fmt in ("%d/%b/%Y:%H:%M:%S %z", "%d/%b/%Y:%H:%M:%S"):
+        try:
+            return datetime.strptime(text if "%z" in fmt else text.split(" ")[0], fmt).isoformat()
+        except ValueError:
+            continue
+    return None
+
+
 def _parse_line(line: str) -> dict | None:
     match = _COMBINED_RE.match(line)
     if not match:
         return None
 
     groups = match.groupdict()
-    try:
-        ts = datetime.strptime(groups["time"].split(" ")[0], "%d/%b/%Y:%H:%M:%S")
-    except ValueError:
-        ts = None
-
     # El ultimo campo extra entre comillas, si hay: el servidor solo lo usa
     # cuando "ip" es la de un proxy de confianza (si no, cualquiera lo inventa).
     extra = [v for v in _TRAILING_QUOTED_RE.findall(line[match.end():]) if v and v != "-"]
 
     return {
-        "ts": ts.isoformat() if ts else None,
+        "ts": _parse_time(groups["time"]),
         "ip": groups["ip"],
         "forwarded_for": extra[-1][:200] if extra else None,
         "method": groups["method"],
@@ -1043,36 +1134,50 @@ def _parse_line(line: str) -> dict | None:
     }
 
 
-def read_new_entries(log_paths: list[str]) -> list[dict]:
+def read_new_entries(log_paths: list[str], max_entries: int = MAX_ENTRIES_PER_READ) -> list[dict]:
+    """Lineas nuevas de cada archivo desde la ultima lectura. Si devuelve
+    max_entries, quedan mas por leer: volver a llamar."""
     state = _load_state()
     entries: list[dict] = []
 
     for path in log_paths:
-        if not os.path.exists(path):
+        if len(entries) >= max_entries:
+            break
+        try:
+            st = os.stat(path)
+        except OSError:
             continue
-
-        inode = os.stat(path).st_ino
         saved = state.get(path)
 
         if saved is None:
             # Primera vez que vemos este archivo: arrancamos desde el final
             # para no mandar todo el historico de golpe.
-            offset = os.path.getsize(path)
-        elif saved.get("inode") != inode:
-            # El inodo cambio: el log roto, el archivo nuevo empieza en 0.
+            offset = st.st_size
+        elif saved.get("inode") != st.st_ino or saved.get("offset", 0) > st.st_size:
+            # Rotado (inodo nuevo) o truncado en el lugar: desde el inicio.
             offset = 0
         else:
             offset = saved.get("offset", 0)
 
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            fh.seek(offset)
-            for line in fh:
-                parsed = _parse_line(line.strip())
-                if parsed:
-                    entries.append(parsed)
-            new_offset = fh.tell()
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(offset)
+                while len(entries) < max_entries:
+                    raw = fh.readline()
+                    if not raw:
+                        break
+                    if not raw.endswith(b"\n"):
+                        # Linea a medio escribir: se lee completa la proxima vez.
+                        fh.seek(-len(raw), os.SEEK_CUR)
+                        break
+                    parsed = _parse_line(raw.decode("utf-8", errors="replace").strip())
+                    if parsed:
+                        entries.append(parsed)
+                new_offset = fh.tell()
+        except OSError:
+            continue  # sin permiso o borrado justo ahora: los demas siguen
 
-        state[path] = {"inode": inode, "offset": new_offset}
+        state[path] = {"inode": st.st_ino, "offset": new_offset}
 
     _save_state(state)
     return entries
@@ -1132,17 +1237,20 @@ async def metrics_loop(client: httpx.AsyncClient, base_url: str, headers: dict, 
         await asyncio.sleep(interval)
 
 
-async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, log_paths: list[str]) -> None:
-    if not log_paths:
-        return
+async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, watch: dict) -> None:
+    """watch["log_paths"] lo actualiza discovery_loop: un sitio web nuevo se
+    empieza a vigilar en el siguiente descubrimiento, sin reiniciar."""
     while True:
         try:
-            entries = log_tailer.read_new_entries(log_paths)
-            if entries:
-                resp = await client.post(
-                    f"{base_url}/api/v1/logs/ingest", json={"entries": entries}, headers=headers
-                )
-                resp.raise_for_status()
+            while watch["log_paths"]:
+                entries = await asyncio.to_thread(log_tailer.read_new_entries, watch["log_paths"])
+                if entries:
+                    resp = await client.post(
+                        f"{base_url}/api/v1/logs/ingest", json={"entries": entries}, headers=headers
+                    )
+                    resp.raise_for_status()
+                if len(entries) < log_tailer.MAX_ENTRIES_PER_READ:
+                    break  # al dia; si no, sigue mandando el atraso
         except Exception:
             logger.exception("Fallo enviando logs")
         await asyncio.sleep(10)
@@ -1198,10 +1306,16 @@ async def send_system_report(client: httpx.AsyncClient, base_url: str, headers: 
     return report
 
 
-async def discovery_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
+async def discovery_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int,
+                         watch: dict, manual_log_paths: bool) -> None:
     while True:
         await asyncio.sleep(interval)
-        await send_system_report(client, base_url, headers)
+        report = await send_system_report(client, base_url, headers)
+        if not manual_log_paths:
+            new_paths = report.get("log_paths", [])
+            if new_paths != watch["log_paths"]:
+                logger.info("Logs de acceso a vigilar actualizados: %s", new_paths)
+                watch["log_paths"] = new_paths
 
 
 # Si el envio falla (servidor reiniciandose, red), reintentar pronto: con
@@ -1269,8 +1383,12 @@ async def main() -> None:
         report = await send_system_report(client, base_url, headers)
 
         log_paths = cfg["log_paths"] or report.get("log_paths", [])
-        if not cfg["log_paths"] and log_paths:
+        if not cfg["log_paths"]:
             logger.info("log_paths autodetectados para este host: %s", log_paths)
+            if report.get("other_log_paths_total"):
+                logger.info("%s logs mas encontrados que no son de acceso web: no se leen",
+                            report["other_log_paths_total"])
+        watch = {"log_paths": log_paths}
 
         process_watch_cfg = dict(cfg["process_watch"])
         if not process_watch_cfg.get("service_users"):
@@ -1281,11 +1399,11 @@ async def main() -> None:
         conn_cfg = cfg.get("connections") or {}
         await asyncio.gather(
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
-            logs_loop(client, base_url, headers, log_paths),
+            logs_loop(client, base_url, headers, watch),
             process_loop(client, base_url, headers, process_watch_cfg),
             auth_loop(client, base_url, headers),
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
-            discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
+            discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"], watch, bool(cfg["log_paths"])),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
             *([connections_loop(client, base_url, headers, int(conn_cfg.get("interval_seconds", 60)))]
               if conn_cfg.get("enabled", True) else []),

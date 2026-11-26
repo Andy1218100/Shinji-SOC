@@ -115,6 +115,12 @@ Todo va al panel por la dirección que le diste al instalar, autenticado con la 
 
 ## Ajustes después de instalar
 
+### Qué logs lee
+
+El agente busca los logs en `/var/log`, `/opt`, `/srv`, `/home` y `/root` (si tiene permiso), y lee solo los **logs de acceso web**: los que tienen líneas en formato *combined* de nginx/apache (lo revisa en las últimas líneas de cada archivo). Un log vacío se vigila si está en una carpeta de servidor web (`nginx`, `apache2`, `httpd`, `caddy`…) o tiene `access` en el nombre. Los demás (del sistema, de juegos, de aplicaciones) aparecen en la página del servidor como "Otros logs encontrados que no se leen": el detector web no los entiende. Los inicios de sesión SSH no salen de esos archivos sino del journal (ver [REFERENCIA.md](REFERENCIA.md#detección-de-intrusos)).
+
+Nunca lee logs comprimidos (`.gz`, `.xz`…), rotados (`access.log.1`, `syslog-20261120`) ni binarios (`wtmp`, journal). Tolera las dos formas de rotar de logrotate (archivo nuevo o `copytruncate`). Cada día repite la búsqueda: un sitio nuevo se empieza a vigilar sin reiniciar el agente.
+
 ### Logs que el agente no puede leer
 
 El agente busca solo los logs de cada servidor. Si alguno está en una carpeta cerrada, la página del servidor lo muestra en "Logs encontrados pero sin permiso", con un botón **Dar acceso** (rol admin, pide tu código MFA). Ese botón da al usuario `shinji-soc` permiso de **solo lectura** sobre esa ruta, sin cambiar dueños ni permisos existentes. Solo funciona bajo `/var/log`, `/opt`, `/srv` o `/home` (nunca `/root`).
@@ -219,4 +225,6 @@ Tiene que mostrar `200`. Sin Cloudflare, prueba con `http://IP_DEL_SERVIDOR:8000
 
 **"fail2ban no quedo activo".** Revisa la configuración de fail2ban con `fail2ban-client -t` y su log con `tail -n 30 /var/log/fail2ban.log`. Sin fail2ban, el agente funciona, pero los bloqueos de IP aprobados en el panel no se aplican.
 
-**No aparecen eventos de ataques web.** El agente solo entiende los logs de acceso en formato *combined* de nginx/apache. Mira en la página del servidor qué logs vigila y si alguno figura sin permiso.
+**No aparecen eventos de ataques web.** El agente solo entiende los logs de acceso en formato *combined* de nginx/apache. Mira en la página del servidor qué logs vigila y si alguno figura sin permiso. Detrás de Cloudflare o de un túnel, el log tiene que llevar la IP real del visitante al final de cada línea (ver [REFERENCIA.md](REFERENCIA.md#proxies-cloudflare-y-la-ip-real)); si no, todos los pedidos parecen venir del túnel y no se cuentan por visitante.
+
+**Agentes instalados antes del 26 de noviembre de 2026.** Mandaban la hora de los logs sin la zona horaria, y en un servidor que no está en UTC los ataques web quedaban fuera de la ventana de conteo. El panel ya lo compensa usando la hora de llegada, pero conviene reinstalar el agente (ver "Reinstalar, actualizar o cambiar la dirección del panel"): el nuevo además deja de leer logs que no son de acceso web.

@@ -50,17 +50,20 @@ async def metrics_loop(client: httpx.AsyncClient, base_url: str, headers: dict, 
         await asyncio.sleep(interval)
 
 
-async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, log_paths: list[str]) -> None:
-    if not log_paths:
-        return
+async def logs_loop(client: httpx.AsyncClient, base_url: str, headers: dict, watch: dict) -> None:
+    """watch["log_paths"] lo actualiza discovery_loop: un sitio web nuevo se
+    empieza a vigilar en el siguiente descubrimiento, sin reiniciar."""
     while True:
         try:
-            entries = log_tailer.read_new_entries(log_paths)
-            if entries:
-                resp = await client.post(
-                    f"{base_url}/api/v1/logs/ingest", json={"entries": entries}, headers=headers
-                )
-                resp.raise_for_status()
+            while watch["log_paths"]:
+                entries = await asyncio.to_thread(log_tailer.read_new_entries, watch["log_paths"])
+                if entries:
+                    resp = await client.post(
+                        f"{base_url}/api/v1/logs/ingest", json={"entries": entries}, headers=headers
+                    )
+                    resp.raise_for_status()
+                if len(entries) < log_tailer.MAX_ENTRIES_PER_READ:
+                    break  # al dia; si no, sigue mandando el atraso
         except Exception:
             logger.exception("Fallo enviando logs")
         await asyncio.sleep(10)
@@ -116,10 +119,16 @@ async def send_system_report(client: httpx.AsyncClient, base_url: str, headers: 
     return report
 
 
-async def discovery_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int) -> None:
+async def discovery_loop(client: httpx.AsyncClient, base_url: str, headers: dict, interval: int,
+                         watch: dict, manual_log_paths: bool) -> None:
     while True:
         await asyncio.sleep(interval)
-        await send_system_report(client, base_url, headers)
+        report = await send_system_report(client, base_url, headers)
+        if not manual_log_paths:
+            new_paths = report.get("log_paths", [])
+            if new_paths != watch["log_paths"]:
+                logger.info("Logs de acceso a vigilar actualizados: %s", new_paths)
+                watch["log_paths"] = new_paths
 
 
 # Si el envio falla (servidor reiniciandose, red), reintentar pronto: con
@@ -187,8 +196,12 @@ async def main() -> None:
         report = await send_system_report(client, base_url, headers)
 
         log_paths = cfg["log_paths"] or report.get("log_paths", [])
-        if not cfg["log_paths"] and log_paths:
+        if not cfg["log_paths"]:
             logger.info("log_paths autodetectados para este host: %s", log_paths)
+            if report.get("other_log_paths_total"):
+                logger.info("%s logs mas encontrados que no son de acceso web: no se leen",
+                            report["other_log_paths_total"])
+        watch = {"log_paths": log_paths}
 
         process_watch_cfg = dict(cfg["process_watch"])
         if not process_watch_cfg.get("service_users"):
@@ -199,11 +212,11 @@ async def main() -> None:
         conn_cfg = cfg.get("connections") or {}
         await asyncio.gather(
             metrics_loop(client, base_url, headers, cfg["metrics_interval_seconds"]),
-            logs_loop(client, base_url, headers, log_paths),
+            logs_loop(client, base_url, headers, watch),
             process_loop(client, base_url, headers, process_watch_cfg),
             auth_loop(client, base_url, headers),
             inventory_loop(client, base_url, headers, cfg["inventory_interval_seconds"]),
-            discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"]),
+            discovery_loop(client, base_url, headers, cfg["discovery_interval_seconds"], watch, bool(cfg["log_paths"])),
             commands_loop(client, base_url, headers, cfg["command_poll_interval_seconds"], cfg["fail2ban_jail"]),
             *([connections_loop(client, base_url, headers, int(conn_cfg.get("interval_seconds", 60)))]
               if conn_cfg.get("enabled", True) else []),

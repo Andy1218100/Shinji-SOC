@@ -13,8 +13,11 @@ import logging
 import os
 import platform
 import pwd
+import re
 
 import psutil
+
+import log_tailer
 
 logger = logging.getLogger("discovery")
 
@@ -75,7 +78,21 @@ LOG_SCAN_MAX_DEPTH = 10
 # Peor caso si las 5 fueran igual de grandes: 5 x 200.000 ~ 20s a la
 # velocidad medida arriba -- aceptable para algo que corre 1 vez al dia.
 LOG_SCAN_MAX_DIRS_PER_ROOT = 200_000
-LOG_SCAN_MAX_RESULTS = 100
+# Candidatos, antes de revisar su contenido. Era 100 y se llenaba con logs
+# comprimidos, rotados y del sistema: en un /var/log normal quedaban afuera
+# los logs de acceso que si sirven (comprobado en un Debian de prueba).
+LOG_SCAN_MAX_RESULTS = 1000
+# Nunca son logs de texto que crezcan: comprimidos, rotados, binarios.
+NOT_TEXT_LOG_SUFFIXES = (".gz", ".xz", ".bz2", ".zst", ".zip", ".lz4", ".7z", ".tar", ".journal", ".journal~")
+BINARY_LOG_NAMES = {"wtmp", "btmp", "utmp", "lastlog", "faillog"}
+_ROTATED_RE = re.compile(r"\.\d+$|[-_.]\d{8}$")  # access.log.1, syslog-20261120
+# Carpetas de servidores web: un log ahi (o con "access" en el nombre) se
+# vigila aunque todavia este vacio o no se pueda leer.
+WEB_LOG_DIR_NAMES = {"nginx", "apache2", "apache", "httpd", "caddy", "traefik", "lighttpd", "haproxy"}
+# Para decidir si un archivo es un log de acceso web se revisan sus ultimas
+# lineas: basta una en formato combined.
+CLASSIFY_TAIL_BYTES = 64 * 1024
+CLASSIFY_MAX_LINES = 200
 # Carpetas que nunca tiene sentido recorrer buscando logs de aplicacion:
 # son potencialmente enormes y lo unico que van a aportar es ruido
 # repetido. El caso real que motivo esto: el storage de imagenes de
@@ -161,6 +178,36 @@ def _looks_like_log(filename: str) -> bool:
     return any(marker in lowered for marker in LOG_FILENAME_MARKERS)
 
 
+def _is_rotated_or_binary(path: str) -> bool:
+    name = os.path.basename(path).lower()
+    return name in BINARY_LOG_NAMES or name.endswith(NOT_TEXT_LOG_SUFFIXES) or bool(_ROTATED_RE.search(name))
+
+
+def _looks_like_web_log(path: str) -> bool:
+    name = os.path.basename(path).lower()
+    parent = os.path.basename(os.path.dirname(path)).lower()
+    return "access" in name or parent in WEB_LOG_DIR_NAMES
+
+
+def classify_log(path: str) -> bool | None:
+    """True si las ultimas lineas tienen formato combined (log de acceso
+    web, lo unico que usa el IDS), False si no, None si esta vacio."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - CLASSIFY_TAIL_BYTES))
+            chunk = fh.read()
+    except OSError:
+        return None
+    if b"\x00" in chunk[:4096]:
+        return False  # binario
+    lines = [ln for ln in chunk.decode("utf-8", errors="replace").splitlines() if ln.strip()]
+    if not lines:
+        return None
+    return any(log_tailer.is_access_line(ln) for ln in lines[-CLASSIFY_MAX_LINES:])
+
+
 def _should_skip_dir(dirpath: str) -> bool:
     normalized = dirpath.replace("\\", "/") + "/"
     return any(marker in normalized for marker in LOG_SCAN_SKIP_MARKERS)
@@ -231,6 +278,8 @@ def _scan_for_log_files() -> tuple[list[str], list[str]]:
                     if not (_looks_like_log(filename) or in_log_dir):
                         continue
                     full_path = os.path.join(dirpath, filename)
+                    if _is_rotated_or_binary(full_path):
+                        continue
                     if os.path.isfile(full_path) and not os.path.islink(full_path):
                         found.add(full_path)
         except Exception:
@@ -249,6 +298,7 @@ def detect_log_paths() -> dict:
     scanned, denied_dirs = _scan_for_log_files()
     candidates.update(scanned)
 
+    fixed = {p for paths in WEB_SERVER_LOG_CANDIDATES.values() for p in paths}
     # Encontrar un archivo (listar la carpeta que lo contiene) y poder leer
     # su contenido son dos permisos distintos en Linux -- hay que chequear
     # los dos para no vigilar a ciegas algo que el agente no va a poder
@@ -256,7 +306,22 @@ def detect_log_paths() -> dict:
     readable = sorted(p for p in candidates if os.access(p, os.R_OK))
     unreadable = sorted(candidates - set(readable))
 
-    return {"readable": readable, "unreadable": unreadable, "denied_dirs": denied_dirs}
+    # Solo se vigilan los logs de acceso web: el IDS descarta cualquier otra
+    # linea, asi que leer logs de juegos o del sistema era trabajo perdido
+    # (y el informe los mostraba como "vigilados"). Un log vacio se vigila
+    # si por nombre o carpeta parece de un servidor web.
+    access, other = [], []
+    for path in readable:
+        kind = classify_log(path)
+        if kind or (kind is None and (path in fixed or _looks_like_web_log(path))):
+            access.append(path)
+        else:
+            other.append(path)
+    # Sin permiso no se puede revisar el contenido: se ofrece "Dar acceso"
+    # solo a los que parecen de un servidor web.
+    unreadable_web = [p for p in unreadable if p in fixed or _looks_like_web_log(p)]
+
+    return {"readable": access, "other": other, "unreadable": unreadable_web, "denied_dirs": denied_dirs}
 
 
 def _is_system_account(entry: pwd.struct_passwd) -> bool:
@@ -297,6 +362,8 @@ def full_report() -> dict:
     report["listening_ports"] = detect_listening_ports()
     log_info = detect_log_paths()
     report["log_paths"] = log_info["readable"]
+    report["other_log_paths"] = log_info["other"][:200]
+    report["other_log_paths_total"] = len(log_info["other"])
     report["unreadable_log_paths"] = log_info["unreadable"]
     report["denied_log_dirs"] = log_info["denied_dirs"]
     report["service_accounts"] = detect_service_accounts()

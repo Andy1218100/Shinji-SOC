@@ -48,8 +48,11 @@ def _build_prompt(host: Host, payload: SystemReportIn) -> str:
         ports = [f"{p.port}" + (f" ({p.process})" if p.process else "") for p in payload.listening_ports]
         lines.append(f"Puertos en escucha ({len(ports)} en total): {_join_capped(ports, 20, '')}.")
     lines.append(
-        f"Logs que el agente va a vigilar ({len(payload.log_paths)} en total): "
+        f"Logs de acceso web que el agente va a vigilar ({len(payload.log_paths)} en total): "
         + _join_capped(payload.log_paths, 10, "ninguno encontrado") + "."
+        + (f" Encontro ademas {payload.other_log_paths_total or len(payload.other_log_paths)} logs que no son "
+           "de acceso web (del sistema o de aplicaciones): no se leen, porque el detector solo entiende logs de "
+           "acceso de nginx/Apache." if (payload.other_log_paths_total or payload.other_log_paths) else "")
     )
     if payload.unreadable_log_paths:
         lines.append(
